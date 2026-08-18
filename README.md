@@ -287,4 +287,4 @@ This is an MVP. Things it explicitly **does not** do (yet):
 
 ## License
 
-MIT.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Sushil Sharma.
