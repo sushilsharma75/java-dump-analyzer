@@ -1,0 +1,13 @@
+2018-06-15 09:12:34
+Full thread dump Java HotSpot(TM) 64-Bit Server VM (25.181-b13 mixed mode):
+
+"main" #1 prio=5 os_prio=0 tid=0x00007f1234567000 nid=0x1001 waiting on condition [0x00007ffd12345000]
+   java.lang.Thread.State: TIMED_WAITING (sleeping)
+        at java.lang.Thread.sleep(Native Method)
+        at com.legacy.App.main(App.java:25)
+
+"worker-1" #5 daemon prio=5 os_prio=0 tid=0x00007f1234568000 nid=0x1005 waiting for monitor entry [0x00007f1234567000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.legacy.Store.put(Store.java:88)
+        - waiting to lock <0x00000000c0a00000> (a java.lang.Object)
+        at com.legacy.App.work(App.java:120)

@@ -1,0 +1,157 @@
+2026-06-26 11:02:14
+Full thread dump Java HotSpot(TM) 64-Bit Server VM (17.0.10+11-LTS mixed mode, sharing):
+
+"main" #1 prio=5 os_prio=0 cpu=512.20ms elapsed=842.10s tid=0x00007f9c1000c800 nid=0x1a01 waiting on condition  [0x00007f9c19bef000]
+   java.lang.Thread.State: WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.10/Native Method)
+	at java.util.concurrent.locks.LockSupport.park(java.base@17.0.10/LockSupport.java:211)
+	at java.util.concurrent.CountDownLatch.await(java.base@17.0.10/CountDownLatch.java:230)
+	at com.example.App.main(App.java:14)
+
+"Reference Handler" #2 daemon prio=10 os_prio=0 cpu=0.42ms elapsed=842.09s tid=0x00007f9c10123000 nid=0x1a02 waiting on condition  [0x00007f9c197ef000]
+   java.lang.Thread.State: RUNNABLE
+	at java.lang.ref.Reference.waitForReferencePendingList(java.base@17.0.10/Native Method)
+	at java.lang.ref.Reference.processPendingReferences(java.base@17.0.10/Reference.java:253)
+	at java.lang.ref.Reference$ReferenceHandler.run(java.base@17.0.10/Reference.java:215)
+
+"Finalizer" #3 daemon prio=8 os_prio=0 cpu=0.30ms elapsed=842.09s tid=0x00007f9c10130000 nid=0x1a03 in Object.wait()  [0x00007f9c196ef000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.10/Native Method)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.10/ReferenceQueue.java:155)
+	at java.lang.ref.Finalizer$FinalizerThread.run(java.base@17.0.10/Finalizer.java:172)
+
+"http-nio-8080-exec-1" #45 daemon prio=5 os_prio=0 cpu=18234.50ms elapsed=210.41s tid=0x00007f9c40500000 nid=0x2001 runnable  [0x00007f9c48aef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Order.<init>(Order.java:7)
+	at com.example.OrderService.loadAll(OrderService.java:21)
+	at com.example.OrderController.list(OrderController.java:38)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-2" #46 daemon prio=5 os_prio=0 cpu=17988.10ms elapsed=210.40s tid=0x00007f9c40501000 nid=0x2002 runnable  [0x00007f9c489ef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Order.<init>(Order.java:7)
+	at com.example.OrderService.loadAll(OrderService.java:21)
+	at com.example.OrderController.list(OrderController.java:38)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-3" #47 daemon prio=5 os_prio=0 cpu=18102.77ms elapsed=210.39s tid=0x00007f9c40502000 nid=0x2003 runnable  [0x00007f9c488ef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Order.<init>(Order.java:7)
+	at com.example.OrderService.loadAll(OrderService.java:21)
+	at com.example.OrderController.list(OrderController.java:38)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-4" #48 daemon prio=5 os_prio=0 cpu=17640.05ms elapsed=210.38s tid=0x00007f9c40503000 nid=0x2004 runnable  [0x00007f9c487ef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Order.<init>(Order.java:7)
+	at com.example.OrderService.loadAll(OrderService.java:21)
+	at com.example.OrderController.list(OrderController.java:38)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-5" #49 daemon prio=5 os_prio=0 cpu=18510.90ms elapsed=210.37s tid=0x00007f9c40504000 nid=0x2005 runnable  [0x00007f9c486ef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Order.<init>(Order.java:7)
+	at com.example.OrderService.loadAll(OrderService.java:21)
+	at com.example.OrderController.list(OrderController.java:38)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-6" #50 daemon prio=5 os_prio=0 cpu=17905.33ms elapsed=210.36s tid=0x00007f9c40505000 nid=0x2006 runnable  [0x00007f9c485ef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Order.<init>(Order.java:7)
+	at com.example.OrderService.loadAll(OrderService.java:21)
+	at com.example.OrderController.list(OrderController.java:38)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-7" #51 daemon prio=5 os_prio=0 cpu=120.44ms elapsed=210.35s tid=0x00007f9c40506000 nid=0x2007 waiting on condition  [0x00007f9c484ef000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.10/Native Method)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@17.0.10/LockSupport.java:269)
+	at java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill(java.base@17.0.10/SynchronousQueue.java:462)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:185)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:162)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:100)
+	at com.example.OrderController.create(OrderController.java:54)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-8" #52 daemon prio=5 os_prio=0 cpu=118.10ms elapsed=210.34s tid=0x00007f9c40507000 nid=0x2008 waiting on condition  [0x00007f9c483ef000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.10/Native Method)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@17.0.10/LockSupport.java:269)
+	at java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill(java.base@17.0.10/SynchronousQueue.java:462)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:185)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:162)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:100)
+	at com.example.OrderController.create(OrderController.java:54)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-9" #53 daemon prio=5 os_prio=0 cpu=121.88ms elapsed=210.33s tid=0x00007f9c40508000 nid=0x2009 waiting on condition  [0x00007f9c482ef000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.10/Native Method)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@17.0.10/LockSupport.java:269)
+	at java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill(java.base@17.0.10/SynchronousQueue.java:462)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:185)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:162)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:100)
+	at com.example.OrderController.create(OrderController.java:54)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-10" #54 daemon prio=5 os_prio=0 cpu=119.02ms elapsed=210.32s tid=0x00007f9c40509000 nid=0x200a waiting on condition  [0x00007f9c481ef000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.10/Native Method)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@17.0.10/LockSupport.java:269)
+	at java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill(java.base@17.0.10/SynchronousQueue.java:462)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:185)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:162)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:100)
+	at com.example.OrderController.create(OrderController.java:54)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-11" #55 daemon prio=5 os_prio=0 cpu=117.66ms elapsed=210.31s tid=0x00007f9c4050a000 nid=0x200b waiting on condition  [0x00007f9c480ef000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.10/Native Method)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@17.0.10/LockSupport.java:269)
+	at java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill(java.base@17.0.10/SynchronousQueue.java:462)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:185)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:162)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:100)
+	at com.example.OrderController.create(OrderController.java:54)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"http-nio-8080-exec-12" #56 daemon prio=5 os_prio=0 cpu=2204.18ms elapsed=210.30s tid=0x00007f9c4050b000 nid=0x200c runnable  [0x00007f9c47fef000]
+   java.lang.Thread.State: RUNNABLE
+	at com.example.SessionRegistry.register(SessionRegistry.java:19)
+	at com.example.LoginController.login(LoginController.java:44)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:205)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:61)
+	at java.lang.Thread.run(java.base@17.0.10/Thread.java:840)
+
+"DefaultQuartzScheduler_Worker-1" #60 daemon prio=5 os_prio=0 cpu=12.05ms elapsed=800.12s tid=0x00007f9c40600000 nid=0x2101 in Object.wait()  [0x00007f9c47eef000]
+   java.lang.Thread.State: TIMED_WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.10/Native Method)
+	at org.quartz.simpl.SimpleThreadPool$WorkerThread.run(SimpleThreadPool.java:573)
+
+"VM Thread" os_prio=0 cpu=88.40ms elapsed=842.08s tid=0x00007f9c10118000 nid=0x1a09 runnable

@@ -1,0 +1,152 @@
+2024-03-15 14:30:22
+Full thread dump Java HotSpot(TM) 64-Bit Server VM (17.0.6+10-LTS mixed mode):
+
+"main" #1 prio=5 os_prio=0 cpu=234.56ms elapsed=10.30s tid=0x00007f8b4000c800 nid=0x1234 waiting on condition  [0x00007f8b48bef000]
+   java.lang.Thread.State: WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x000000076b8b4928> (a java.util.concurrent.CountDownLatch$Sync)
+	at java.util.concurrent.locks.LockSupport.park(java.base@17.0.6/LockSupport.java:211)
+	at java.util.concurrent.locks.AbstractQueuedSynchronizer.acquireSharedInterruptibly(java.base@17.0.6/AbstractQueuedSynchronizer.java:1116)
+	at java.util.concurrent.CountDownLatch.await(java.base@17.0.6/CountDownLatch.java:230)
+	at com.example.Application.main(Application.java:42)
+
+"Reference Handler" #2 daemon prio=10 os_prio=0 cpu=0.51ms elapsed=10.29s tid=0x00007f8b40123000 nid=0x1235 waiting on condition  [0x00007f8b487ef000]
+   java.lang.Thread.State: RUNNABLE
+	at java.lang.ref.Reference.waitForReferencePendingList(java.base@17.0.6/Native Method)
+	at java.lang.ref.Reference.processPendingReferences(java.base@17.0.6/Reference.java:253)
+	at java.lang.ref.Reference$ReferenceHandler.run(java.base@17.0.6/Reference.java:215)
+
+"http-nio-8080-exec-1" #45 daemon prio=5 os_prio=0 cpu=2034.56ms elapsed=9.21s tid=0x00007f8b40500000 nid=0x2001 waiting for monitor entry  [0x00007f8b48aef000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.service.OrderService.processOrder(OrderService.java:142)
+	- waiting to lock <0x00000007c0a00000> (a java.lang.Object)
+	at com.example.service.OrderService.handle(OrderService.java:78)
+	at com.example.controller.OrderController.create(OrderController.java:55)
+	at jdk.internal.reflect.GeneratedMethodAccessor42.invoke(Unknown Source)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:205)
+	at org.springframework.web.servlet.mvc.method.RequestMappingHandlerAdapter.handle(RequestMappingHandlerAdapter.java:880)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1071)
+
+   Locked ownable synchronizers:
+	- None
+
+"http-nio-8080-exec-2" #46 daemon prio=5 os_prio=0 cpu=2134.21ms elapsed=9.20s tid=0x00007f8b40501000 nid=0x2002 waiting for monitor entry  [0x00007f8b48bef000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.service.OrderService.processOrder(OrderService.java:142)
+	- waiting to lock <0x00000007c0a00000> (a java.lang.Object)
+	at com.example.service.OrderService.handle(OrderService.java:78)
+	at com.example.controller.OrderController.create(OrderController.java:55)
+
+"http-nio-8080-exec-3" #47 daemon prio=5 os_prio=0 cpu=2034.56ms elapsed=9.21s tid=0x00007f8b40502000 nid=0x2003 waiting for monitor entry  [0x00007f8b48cef000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.service.OrderService.processOrder(OrderService.java:142)
+	- waiting to lock <0x00000007c0a00000> (a java.lang.Object)
+	at com.example.service.OrderService.handle(OrderService.java:78)
+	at com.example.controller.OrderController.create(OrderController.java:55)
+
+"http-nio-8080-exec-4" #48 daemon prio=5 os_prio=0 cpu=2134.21ms elapsed=9.20s tid=0x00007f8b40503000 nid=0x2004 waiting for monitor entry  [0x00007f8b48def000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.service.OrderService.processOrder(OrderService.java:142)
+	- waiting to lock <0x00000007c0a00000> (a java.lang.Object)
+	at com.example.service.OrderService.handle(OrderService.java:78)
+	at com.example.controller.OrderController.create(OrderController.java:55)
+
+"http-nio-8080-exec-5" #49 daemon prio=5 os_prio=0 cpu=234.56ms elapsed=9.19s tid=0x00007f8b40504000 nid=0x2005 runnable  [0x00007f8b48eef000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@17.0.6/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@17.0.6/SocketDispatcher.java:46)
+	at java.net.Socket$SocketInputStream.read(java.base@17.0.6/Socket.java:990)
+	at com.zaxxer.hikari.pool.ProxyConnection.executeQuery(ProxyConnection.java:300)
+	at com.example.repository.OrderRepository.findById(OrderRepository.java:55)
+	at com.example.service.OrderService.processOrder(OrderService.java:155)
+	- locked <0x00000007c0a00000> (a java.lang.Object)
+	at com.example.service.OrderService.handle(OrderService.java:78)
+	at com.example.controller.OrderController.create(OrderController.java:55)
+
+"hikari-pool-1-connection-adder" #88 daemon prio=5 os_prio=0 cpu=1.23ms elapsed=8.50s tid=0x00007f8b40600000 nid=0x3001 waiting on condition  [0x00007f8b49000000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x00000007c0b00000> (a java.util.concurrent.SynchronousQueue$TransferStack)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:152)
+
+"http-nio-8080-exec-6" #50 daemon prio=5 os_prio=0 tid=0x00007f8b40505000 nid=0x2006 waiting on condition  [0x00007f8b48fef000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x00000007c0c00000> (a java.util.concurrent.SynchronousQueue$TransferStack)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@17.0.6/LockSupport.java:252)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:152)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:128)
+	at com.example.repository.OrderRepository.findById(OrderRepository.java:55)
+	at com.example.service.OrderService.processOrder(OrderService.java:155)
+
+"http-nio-8080-exec-7" #51 daemon prio=5 os_prio=0 tid=0x00007f8b40506000 nid=0x2007 waiting on condition  [0x00007f8b49100000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x00000007c0c00000> (a java.util.concurrent.SynchronousQueue$TransferStack)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:152)
+
+"http-nio-8080-exec-8" #52 daemon prio=5 os_prio=0 tid=0x00007f8b40507000 nid=0x2008 waiting on condition  [0x00007f8b49200000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x00000007c0c00000> (a java.util.concurrent.SynchronousQueue$TransferStack)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:152)
+
+"http-nio-8080-exec-9" #53 daemon prio=5 os_prio=0 tid=0x00007f8b40508000 nid=0x2009 waiting on condition  [0x00007f8b49300000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x00000007c0c00000> (a java.util.concurrent.SynchronousQueue$TransferStack)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:152)
+
+"http-nio-8080-exec-10" #54 daemon prio=5 os_prio=0 tid=0x00007f8b40509000 nid=0x2010 waiting on condition  [0x00007f8b49400000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@17.0.6/Native Method)
+	- parking to wait for  <0x00000007c0c00000> (a java.util.concurrent.SynchronousQueue$TransferStack)
+	at com.zaxxer.hikari.util.ConcurrentBag.borrow(ConcurrentBag.java:151)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:152)
+
+"Thread-Deadlock-A" #100 prio=5 os_prio=0 tid=0x00007f8b40700000 nid=0x4001 waiting for monitor entry  [0x00007f8b50000000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.Deadlock$1.run(Deadlock.java:17)
+	- waiting to lock <0x00000007c1000000> (a java.lang.Object)
+	- locked <0x00000007c1000010> (a java.lang.Object)
+	at java.lang.Thread.run(java.base@17.0.6/Thread.java:842)
+
+"Thread-Deadlock-B" #101 prio=5 os_prio=0 tid=0x00007f8b40701000 nid=0x4002 waiting for monitor entry  [0x00007f8b50100000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.Deadlock$2.run(Deadlock.java:31)
+	- waiting to lock <0x00000007c1000010> (a java.lang.Object)
+	- locked <0x00000007c1000000> (a java.lang.Object)
+	at java.lang.Thread.run(java.base@17.0.6/Thread.java:842)
+
+"VM Thread" os_prio=0 cpu=12.34ms elapsed=10.29s tid=0x00007f8b40800000 nid=0x5001 runnable
+
+"GC Thread#0" os_prio=0 cpu=45.67ms elapsed=10.29s tid=0x00007f8b40900000 nid=0x6001 runnable
+
+"G1 Main Marker" os_prio=0 cpu=1.23ms elapsed=10.29s tid=0x00007f8b40901000 nid=0x6002 runnable
+
+Found one Java-level deadlock:
+=============================
+"Thread-Deadlock-A":
+  waiting to lock monitor 0x00007f8b40500000 (object 0x00000007c1000000, a java.lang.Object),
+  which is held by "Thread-Deadlock-B"
+"Thread-Deadlock-B":
+  waiting to lock monitor 0x00007f8b40501000 (object 0x00000007c1000010, a java.lang.Object),
+  which is held by "Thread-Deadlock-A"
+
+Java stack information for the threads listed above:
+===================================================
+"Thread-Deadlock-A":
+	at com.example.Deadlock$1.run(Deadlock.java:17)
+	- waiting to lock <0x00000007c1000000> (a java.lang.Object)
+	- locked <0x00000007c1000010> (a java.lang.Object)
+"Thread-Deadlock-B":
+	at com.example.Deadlock$2.run(Deadlock.java:31)
+	- waiting to lock <0x00000007c1000010> (a java.lang.Object)
+	- locked <0x00000007c1000000> (a java.lang.Object)
+
+Found 1 deadlock.

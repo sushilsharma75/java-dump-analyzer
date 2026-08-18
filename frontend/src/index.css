@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background:
+      radial-gradient(ellipse at top, rgba(245, 158, 11, 0.05) 0%, transparent 50%),
+      radial-gradient(ellipse at bottom right, rgba(96, 165, 250, 0.04) 0%, transparent 50%),
+      #070a0f;
+    background-attachment: fixed;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  ::selection {
+    background: rgba(245, 158, 11, 0.3);
+    color: #fafaf9;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1f2937;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #374151;
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-ink-900/70 border border-ink-600/60 rounded-xl backdrop-blur-sm;
+  }
+
+  .panel-inset {
+    @apply bg-ink-950/60 border border-ink-600/40 rounded-lg;
+  }
+
+  .label {
+    @apply text-[10px] font-mono uppercase tracking-[0.18em] text-bone-400;
+  }
+
+  .stat-num {
+    @apply font-display text-4xl font-light tracking-tightest text-bone-100 tabular-nums;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md font-mono text-xs uppercase tracking-wider transition-all duration-150 border;
+  }
+
+  .btn-primary {
+    @apply btn bg-flag-warning/10 text-flag-warning border-flag-warning/30 hover:bg-flag-warning/20 hover:border-flag-warning/50;
+  }
+
+  .btn-secondary {
+    @apply btn bg-ink-800 text-bone-300 border-ink-600 hover:border-bone-500 hover:text-bone-100;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-sm font-mono text-[10px] uppercase tracking-wider border;
+  }
+
+  .badge-critical {
+    @apply badge bg-flag-critical/15 text-flag-critical border-flag-critical/30;
+  }
+  .badge-warning {
+    @apply badge bg-flag-warning/15 text-flag-warning border-flag-warning/30;
+  }
+  .badge-info {
+    @apply badge bg-flag-info/15 text-flag-info border-flag-info/30;
+  }
+  .badge-ok {
+    @apply badge bg-flag-ok/15 text-flag-ok border-flag-ok/30;
+  }
+  .badge-neutral {
+    @apply badge bg-ink-700 text-bone-300 border-ink-600;
+  }
+}
+
+/* Subtle grid background for hero */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Crosshair accent for "diagnostic" feel */
+.crosshair {
+  position: relative;
+}
+.crosshair::before,
+.crosshair::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+  opacity: 0.35;
+}
+.crosshair::before {
+  top: -4px;
+  left: 50%;
+  width: 1px;
+  height: 8px;
+  transform: translateX(-50%);
+}
+.crosshair::after {
+  left: -4px;
+  top: 50%;
+  height: 1px;
+  width: 8px;
+  transform: translateY(-50%);
+}

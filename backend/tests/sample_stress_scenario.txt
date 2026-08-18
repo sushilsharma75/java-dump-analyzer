@@ -1,0 +1,252 @@
+2026-05-27 10:00:00
+Full thread dump OpenJDK 64-Bit Server VM (21.0.1+12-LTS mixed mode, sharing):
+
+"http-nio-8080-exec-1" #11 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000001 nid=0x0001 waiting for monitor entry  [0x00007f00aa001000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-2" #12 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000002 nid=0x0002 waiting for monitor entry  [0x00007f00aa002000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-3" #13 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000003 nid=0x0003 waiting for monitor entry  [0x00007f00aa003000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-4" #14 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000004 nid=0x0004 waiting for monitor entry  [0x00007f00aa004000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-5" #15 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000005 nid=0x0005 waiting for monitor entry  [0x00007f00aa005000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-6" #16 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000006 nid=0x0006 waiting for monitor entry  [0x00007f00aa006000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-7" #17 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000007 nid=0x0007 waiting for monitor entry  [0x00007f00aa007000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-8" #18 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000008 nid=0x0008 waiting for monitor entry  [0x00007f00aa008000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-9" #19 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000009 nid=0x0009 waiting for monitor entry  [0x00007f00aa009000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-10" #20 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000000a nid=0x000a waiting for monitor entry  [0x00007f00aa00a000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-11" #21 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000000b nid=0x000b waiting for monitor entry  [0x00007f00aa00b000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-12" #22 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000000c nid=0x000c waiting for monitor entry  [0x00007f00aa00c000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-13" #23 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000000d nid=0x000d waiting for monitor entry  [0x00007f00aa00d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-14" #24 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000000e nid=0x000e waiting for monitor entry  [0x00007f00aa00e000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-15" #25 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000000f nid=0x000f waiting for monitor entry  [0x00007f00aa00f000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-16" #26 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000010 nid=0x0010 waiting for monitor entry  [0x00007f00aa010000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-17" #27 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000011 nid=0x0011 waiting for monitor entry  [0x00007f00aa011000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-18" #28 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000012 nid=0x0012 waiting for monitor entry  [0x00007f00aa012000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-19" #29 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000013 nid=0x0013 waiting for monitor entry  [0x00007f00aa013000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-20" #30 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000014 nid=0x0014 waiting for monitor entry  [0x00007f00aa014000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-21" #31 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000015 nid=0x0015 waiting for monitor entry  [0x00007f00aa015000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-22" #32 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000016 nid=0x0016 waiting for monitor entry  [0x00007f00aa016000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-23" #33 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000017 nid=0x0017 waiting for monitor entry  [0x00007f00aa017000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-24" #34 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000018 nid=0x0018 waiting for monitor entry  [0x00007f00aa018000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-25" #35 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f0000000019 nid=0x0019 waiting for monitor entry  [0x00007f00aa019000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-26" #36 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000001a nid=0x001a waiting for monitor entry  [0x00007f00aa01a000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-27" #37 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000001b nid=0x001b waiting for monitor entry  [0x00007f00aa01b000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-28" #38 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000001c nid=0x001c waiting for monitor entry  [0x00007f00aa01c000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-29" #39 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000001d nid=0x001d waiting for monitor entry  [0x00007f00aa01d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-30" #40 daemon prio=5 os_prio=0 cpu=120.5ms elapsed=300.0s tid=0x00007f000000001e nid=0x001e waiting for monitor entry  [0x00007f00aa01e000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.shop.inventory.StockService.reserve(StockService.java:88)
+	- waiting to lock <0x00000007c0ffee00> (a java.lang.Object)
+	at com.shop.order.OrderService.place(OrderService.java:51)
+
+"http-nio-8080-exec-31" #41 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f000001001f nid=0x0083 runnable  [0x00007f00bb01f000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-32" #42 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010020 nid=0x0084 runnable  [0x00007f00bb020000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-33" #43 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010021 nid=0x0085 runnable  [0x00007f00bb021000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-34" #44 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010022 nid=0x0086 runnable  [0x00007f00bb022000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-35" #45 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010023 nid=0x0087 runnable  [0x00007f00bb023000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-36" #46 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010024 nid=0x0088 runnable  [0x00007f00bb024000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-37" #47 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010025 nid=0x0089 runnable  [0x00007f00bb025000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-38" #48 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010026 nid=0x008a runnable  [0x00007f00bb026000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-39" #49 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010027 nid=0x008b runnable  [0x00007f00bb027000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"http-nio-8080-exec-40" #50 daemon prio=5 os_prio=0 cpu=95.1ms elapsed=300.0s tid=0x00007f0000010028 nid=0x008c runnable  [0x00007f00bb028000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.1/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@21.0.1/SocketDispatcher.java:46)
+	at com.shop.payment.PaymentClient.charge(PaymentClient.java:203)
+
+"inventory-sync-1" #99 daemon prio=5 os_prio=0 cpu=290000.0ms elapsed=300.0s tid=0x00007f0000099999 nid=0x9999 runnable  [0x00007f00cc000000]
+   java.lang.Thread.State: RUNNABLE
+	at com.shop.inventory.WarehouseFeed.fullResync(WarehouseFeed.java:412)
+	at com.shop.inventory.StockService.reserve(StockService.java:90)
+	- locked <0x00000007c0ffee00> (a java.lang.Object)
+
+"GC Thread#1" os_prio=0 cpu=110000.0ms elapsed=300.0s tid=0x00007f0000aa0001 nid=0xaa01 runnable
+
+"GC Thread#2" os_prio=0 cpu=110000.0ms elapsed=300.0s tid=0x00007f0000aa0002 nid=0xaa02 runnable

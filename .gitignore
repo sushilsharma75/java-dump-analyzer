@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.log
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Dumps (don't commit user data)
+*.hprof
+*.tdump
+thread-dump-*.txt
+heap-*.bin
+
+# Local tooling state (not part of the project)
+.claude/settings.local.json
+.remember/
+.semgrep/
+.pytest_cache/
+
+# Superseded single-file prototypes, kept on disk for reference only.
+# The real code lives in backend/app/ and frontend/src/.
+/App.jsx
+/backend-main.py
+/source.py
+
+# Unrelated to this project
+/order-search-kb.html
+
+# WSL/Windows alternate-data-stream artifacts
+*:Zone.Identifier

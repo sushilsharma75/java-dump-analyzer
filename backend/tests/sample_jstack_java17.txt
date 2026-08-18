@@ -1,0 +1,36 @@
+2024-11-08 14:32:18
+Full thread dump OpenJDK 64-Bit Server VM (17.0.9+9-Ubuntu-1ubuntu122.04 mixed mode, sharing):
+
+Threads class SMR info:
+_java_thread_list=0x00007f8a5c0a3210, length=8, elements={
+0x00007f8a64018a90, 0x00007f8a6418d850, 0x00007f8a64192c40, 0x00007f8a641aa910
+}
+
+"main" #1 prio=5 os_prio=0 cpu=1234.56ms elapsed=23.45s tid=0x00007f8a64018a90 nid=0x1a3b waiting on condition  [0x00007ffd84a52000]
+   java.lang.Thread.State: TIMED_WAITING (sleeping)
+	at java.lang.Thread.sleep0(java.base@17.0.9/Native Method)
+	at java.lang.Thread.sleep(java.base@17.0.9/Thread.java:344)
+	at com.acme.Application.main(Application.java:42)
+
+"http-nio-8080-exec-1" #23 daemon prio=5 os_prio=0 cpu=89.12ms elapsed=22.10s tid=0x00007f8a6418d850 nid=0x1a52 waiting for monitor entry  [0x00007f8a3c5fe000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.acme.service.OrderService.processOrder(OrderService.java:142)
+	- waiting to lock <0x00000007c0a00000> (a com.acme.service.OrderService)
+	at com.acme.web.OrderController.create(OrderController.java:67)
+	at jdk.internal.reflect.GeneratedMethodAccessor3.invoke(Unknown Source)
+	at java.lang.reflect.Method.invoke(java.base@17.0.9/Method.java:568)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:205)
+
+"http-nio-8080-exec-2" #24 daemon prio=5 os_prio=0 cpu=88.40ms elapsed=22.09s tid=0x00007f8a64192c40 nid=0x1a53 waiting for monitor entry  [0x00007f8a3c4fd000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.acme.service.OrderService.processOrder(OrderService.java:142)
+	- waiting to lock <0x00000007c0a00000> (a com.acme.service.OrderService)
+	at com.acme.web.OrderController.create(OrderController.java:67)
+
+"holder-thread" #25 daemon prio=5 os_prio=0 cpu=512.30ms elapsed=22.05s tid=0x00007f8a641aa910 nid=0x1a54 runnable  [0x00007f8a3c3fc000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@17.0.9/Native Method)
+	at sun.nio.ch.SocketDispatcher.read(java.base@17.0.9/SocketDispatcher.java:46)
+	at com.acme.service.OrderService.processOrder(OrderService.java:158)
+	- locked <0x00000007c0a00000> (a com.acme.service.OrderService)
+	at com.acme.web.OrderController.create(OrderController.java:67)
