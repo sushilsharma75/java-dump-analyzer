@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>tfa</groupId>
+        <artifactId>tfa-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>tfa-testkit</artifactId>
+    <name>tfa-testkit</name>
+    <description>Synthetic log generation for tests.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>tfa</groupId>
+            <artifactId>tfa-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>
