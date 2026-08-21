@@ -11,8 +11,11 @@ import tfa.ingest.ProfileLoader;
 import tfa.ingest.RecordParser;
 import tfa.baseline.ConsensusBuilder;
 import tfa.cluster.SignatureClusterer;
+import tfa.detect.DetectionEngine;
+import tfa.detect.DetectionResult;
 import tfa.model.Baseline;
 import tfa.model.Episode;
+import tfa.model.Finding;
 import tfa.model.FlowCluster;
 import tfa.model.LogRecord;
 import tfa.model.TerminalStatus;
@@ -50,6 +53,7 @@ public final class Main {
                 case "segment" -> segment(new Args(argv, 1));
                 case "cluster" -> cluster(new Args(argv, 1));
                 case "baseline" -> baseline(new Args(argv, 1));
+                case "detect" -> detect(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
@@ -409,6 +413,44 @@ public final class Main {
                 baselined, clusters.stream().filter(FlowCluster::isUnderSampled).count());
     }
 
+    // -- tfa detect <dir> --config <yaml> -----------------------------------
+
+    private static void detect(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        if (dir == null || configPath == null) {
+            System.err.println("usage: tfa detect <dir> --config <yaml>");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+        List<FlowCluster> clusters = clustersFrom(Path.of(dir), config);
+        DetectionEngine engine = new DetectionEngine(config.detection(), config.baseline());
+        DetectionResult result = engine.detect(clusters);
+
+        System.out.printf("profile           : %s%n", config.profile().name());
+        System.out.printf("strategy          : %s%n", config.segmentation().strategy());
+        System.out.printf("episodes evaluated: %,d   censored: %,d   censor margin: %,dms%n",
+                result.episodesEvaluated(), result.episodesCensored(), result.marginMillis());
+        System.out.printf("corpus            : %s -> %s%n", result.corpusStart(), result.corpusEnd());
+
+        List<Finding> all = result.allFindings();
+        System.out.println("----------------------------------------------------------");
+        System.out.printf("RAW FINDINGS (unranked): %,d%n", all.size());
+        for (DetectionResult.ClusterFindings cf : result.perCluster()) {
+            if (cf.findings().isEmpty()) {
+                continue;
+            }
+            System.out.printf("  cluster [%d] %s%n", cf.cluster().size(), cf.cluster().signature());
+            for (Finding f : cf.findings()) {
+                System.out.printf("    %-11s idx=%d  expected=%s (%.0f%%)  observed=%s  thread=%s @ %s%n",
+                        f.type(), f.divergenceIndex(), f.expectedCallSite(), f.expectedShare() * 100,
+                        f.observed(), f.episode().threadId(), f.episode().start());
+            }
+        }
+        System.out.println("(ranking, dedup and report land in Phase 6 `tfa analyze`.)");
+    }
+
     // -- tfa detect-format <file> -------------------------------------------
 
     private static void detectFormat(Args args) {
@@ -490,6 +532,9 @@ public final class Main {
 
                   tfa baseline <dir> --config <yaml>
                       Derive the consensus baseline per cluster and print it.
+
+                  tfa detect <dir> --config <yaml>
+                      Run the detectors and list raw (unranked) findings.
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.

@@ -46,16 +46,18 @@ public final class AnalysisConfig {
     private final SegmentationConfig segmentation;
     private final ClusteringConfig clustering;
     private final BaselineConfig baseline;
+    private final DetectionConfig detection;
 
     public AnalysisConfig(FormatProfile profile, double matchThreshold, int sampleLines,
                           SegmentationConfig segmentation, ClusteringConfig clustering,
-                          BaselineConfig baseline) {
+                          BaselineConfig baseline, DetectionConfig detection) {
         this.profile = profile;
         this.matchThreshold = matchThreshold;
         this.sampleLines = sampleLines;
         this.segmentation = segmentation;
         this.clustering = clustering;
         this.baseline = baseline;
+        this.detection = detection;
     }
 
     public FormatProfile profile()            { return profile; }
@@ -64,6 +66,7 @@ public final class AnalysisConfig {
     public SegmentationConfig segmentation()  { return segmentation; }
     public ClusteringConfig clustering()      { return clustering; }
     public BaselineConfig baseline()          { return baseline; }
+    public DetectionConfig detection()        { return detection; }
 
     @SuppressWarnings("unchecked")
     public static AnalysisConfig load(Path yaml) {
@@ -87,8 +90,20 @@ public final class AnalysisConfig {
         SegmentationConfig seg = resolveSegmentation(doc);
         ClusteringConfig clustering = resolveClustering(doc);
         BaselineConfig baseline = resolveBaseline(doc);
+        DetectionConfig detection = resolveDetection(doc);
 
-        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering, baseline);
+        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering, baseline, detection);
+    }
+
+    private static DetectionConfig resolveDetection(Map<String, Object> doc) {
+        Map<String, Object> d = asMap(doc.get("detection"));
+        if (d == null) {
+            return DetectionConfig.defaults();
+        }
+        double factor = asDouble(d.get("timingFactor"), 3.0);
+        Long margin = d.get("censorMarginMillis") == null
+                ? null : Long.parseLong(String.valueOf(d.get("censorMarginMillis")));
+        return new DetectionConfig(factor, margin);
     }
 
     private static BaselineConfig resolveBaseline(Map<String, Object> doc) {

@@ -191,3 +191,49 @@ baseline:
     end:   "2026-08-23T00:00:00Z"
   alternatives: 3
 ```
+
+## Phase 5 — detection (implemented)
+
+Three independent detectors, each taking `(Episode, Baseline)` and returning zero
+or more `Finding`s. **Log level is never a detection trigger** — an ERROR record
+is a ranking input, not a detector; the valuable defects are flows that silently
+took a wrong branch and logged nothing at ERROR.
+
+1. **TruncationDetector** — the episode did not complete, or the modal terminal
+   was never reached. The primary "the flow broke" signal.
+2. **DivergenceDetector** — compares the episode's collapsed sequence against the
+   modal sequence and reports the FIRST position where they differ, with what the
+   majority did there and how strong it was ("94% went to X here, this went to Y").
+3. **TimingDetector** — any transition whose elapsed time exceeds baseline p95 by
+   a factor (default 3x). Measured over collapsed runs, so a fast retry storm
+   doesn't trip it.
+
+**Boundary censoring (§3.5)**: `DetectionEngine` censors episodes overlapping a
+margin (default: one p99 episode duration) of the corpus start/end before any
+detector runs — they're usable for baselining but never eligible as findings, so
+the top findings aren't just the requests in flight when the dump was taken.
+Under-sampled clusters have no baseline and are skipped for detection.
+
+### CLI
+
+```bash
+tfa detect <dir> --config <yaml>
+```
+
+Lists the raw (unranked) findings per cluster. Ranking, dedup, and the report
+land in Phase 6 (`tfa analyze`).
+
+Config additions:
+
+```yaml
+detection:
+  timingFactor: 3.0
+  censorMarginMillis: 60000   # optional; omit to derive from the p99 episode duration
+```
+
+> Note: because clusters group by the first K call sites, a divergence must occur
+> **after** the signature prefix to be compared within its cluster. If a defect
+> diverges within the first K call sites it forms its own (often under-sampled)
+> cluster; lower K (or the Phase 0 entry analysis) governs this. On the sample
+> corpus, K=2 keeps the divergent error flow in the main cluster and both the
+> divergence and truncation detectors fire on it.
