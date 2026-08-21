@@ -65,3 +65,51 @@ tfa detect-format <file> [--sample 500]
 
 `tfa parse` reports per-bucket line counts, record count, distinct threads,
 distinct call sites, timestamp range, wall time, and peak heap.
+
+## Phase 2 — episode segmentation (implemented)
+
+Splits each thread's record stream into **episodes** — one contiguous execution
+of one flow on one thread. A pooled thread runs request after request, so
+`exec-7` at 14:32 and `exec-7` at 14:35 are different episodes.
+
+- **`FlowKeyStrategy`** is the pluggable segmentation contract; nothing
+  downstream depends on which implementation ran. To honor the streaming
+  constraint (a thread may have millions of records), strategies express their
+  logic as an incremental `ThreadSegmenter`, and `StreamingSegmenter` drives it
+  over the whole stream holding only one open episode per active thread.
+  - **`EntryMarkerStrategy`** (A) — a new episode begins at an entry call site
+    and ends at a terminal (COMPLETED) or when the next entry appears
+    (TRUNCATED). An ERROR-level record makes the episode ERRORED.
+  - **`IdleGapStrategy`** (B) — a new episode begins when the gap since the
+    previous record on the thread exceeds a threshold; status is TRUNCATED
+    unless a configured terminal was reached.
+  - **`CorrelationIdStrategy`** (C) — a stub proving the interface accommodates a
+    future cross-thread key. Not implemented in V1.
+- Strategy choice, entry/terminal call-site sets, and the gap threshold come
+  from the run config (`AnalysisConfig`), populated from the Phase 0 report.
+
+### CLI
+
+```bash
+tfa segment <dir> --config <yaml>
+```
+
+Prints total episodes, status breakdown, episodes-per-thread /
+records-per-episode / episode-duration histograms, and the 10 longest episodes
+with their call-site sequences.
+
+Example config:
+
+```yaml
+profile: default
+segmentation:
+  strategy: ENTRY_MARKER            # ENTRY_MARKER | IDLE_GAP | CORRELATION_ID
+  entryCallSites: [com.acme.web.Dispatcher:10]
+  terminalCallSites: [com.acme.web.Dispatcher:99]
+  idleGapMillis: 5000               # used by IDLE_GAP
+```
+
+> Note: duplicate appenders (§3.5) are not yet deduped — the Phase 0 recon
+> measures the rate, and the dedupe decision is deferred. Under `IDLE_GAP`,
+> duplicated records from a second appender file can surface as extra
+> single-record episodes; `ENTRY_MARKER` drops them as orphan non-entry records.

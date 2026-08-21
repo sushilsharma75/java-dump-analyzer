@@ -82,7 +82,7 @@ public final class ProfileLoader {
         return doc;
     }
 
-    static FormatProfile fromMap(String name, Map<String, Object> map) {
+    public static FormatProfile fromMap(String name, Map<String, Object> map) {
         String envelope = str(map, "envelope", true);
         String tsPattern = str(map, "timestampPattern", false);
         String zoneStr = str(map, "zone", false);

@@ -1,5 +1,6 @@
 package tfa.cli;
 
+import tfa.config.AnalysisConfig;
 import tfa.ingest.FileSetReader;
 import tfa.ingest.FormatDetector;
 import tfa.ingest.FormatProfile;
@@ -8,11 +9,22 @@ import tfa.ingest.MatchRateReport;
 import tfa.ingest.ParseStats;
 import tfa.ingest.ProfileLoader;
 import tfa.ingest.RecordParser;
+import tfa.model.Episode;
 import tfa.model.LogRecord;
+import tfa.model.TerminalStatus;
+import tfa.segment.FlowKeyStrategy;
+import tfa.segment.StreamingSegmenter;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -31,6 +43,7 @@ public final class Main {
         try {
             switch (cmd) {
                 case "parse" -> parse(new Args(argv, 1));
+                case "segment" -> segment(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
@@ -42,6 +55,9 @@ public final class Main {
         } catch (MatchRateException e) {
             reportMatchFailure(e);
             System.exit(2);
+        } catch (UnsupportedOperationException e) {
+            System.err.println("unsupported: " + e.getMessage());
+            System.exit(3);
         } catch (IllegalArgumentException e) {
             System.err.println("error: " + e.getMessage());
             System.exit(1);
@@ -127,6 +143,135 @@ public final class Main {
         }
     }
 
+    // -- tfa segment <dir> --config <yaml> ----------------------------------
+
+    private static void segment(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        if (dir == null || configPath == null) {
+            System.err.println("usage: tfa segment <dir> --config <yaml>");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+        FormatProfile profile = config.profile();
+        RecordParser parser = new RecordParser(profile);
+        ParseStats stats = new ParseStats();
+        FileSetReader reader = new FileSetReader(Path.of(dir), parser, stats);
+        reader.requireMatchRate(config.sampleLines(), config.matchThreshold());
+
+        FlowKeyStrategy strategy = config.segmentation().buildStrategy();
+        StreamingSegmenter segmenter = new StreamingSegmenter(strategy);
+
+        System.out.printf("profile           : %s%n", profile.name());
+        System.out.printf("strategy          : %s%n", strategy.name());
+
+        SegmentStats agg = new SegmentStats();
+        long t0 = System.nanoTime();
+        try (Stream<LogRecord> records = reader.records()) {
+            segmenter.segment(records, agg::accept);
+        }
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+
+        agg.print(elapsedMs);
+    }
+
+    /** Incremental aggregation of segmentation output for the report. */
+    private static final class SegmentStats {
+        long totalEpisodes;
+        final Map<String, Long> perThread = new HashMap<>();
+        final long[] recordBuckets = new long[RECORD_BUCKETS.length];
+        final long[] durationBuckets = new long[DURATION_BUCKETS.length];
+        final Map<TerminalStatus, Long> statusCounts = new EnumMap<>(TerminalStatus.class);
+        // min-heap of the 10 longest episodes by record count
+        final PriorityQueue<Episode> longest =
+                new PriorityQueue<>((a, b) -> Integer.compare(a.size(), b.size()));
+
+        void accept(Episode e) {
+            totalEpisodes++;
+            perThread.merge(e.threadId(), 1L, Long::sum);
+            recordBuckets[bucketIndex(RECORD_BUCKETS, e.size())]++;
+            durationBuckets[bucketIndex(DURATION_BUCKETS, durationMillis(e))]++;
+            statusCounts.merge(e.status(), 1L, Long::sum);
+            longest.offer(e);
+            if (longest.size() > 10) {
+                longest.poll();
+            }
+        }
+
+        void print(long elapsedMs) {
+            System.out.println("----------------------------------------------------------");
+            System.out.println("SEGMENTATION");
+            System.out.printf("  total episodes  : %,d%n", totalEpisodes);
+            System.out.printf("  distinct threads: %,d%n", perThread.size());
+            System.out.printf("  wall time       : %,d ms%n", elapsedMs);
+
+            System.out.println("  status breakdown:");
+            for (TerminalStatus s : TerminalStatus.values()) {
+                long n = statusCounts.getOrDefault(s, 0L);
+                System.out.printf("      %-10s: %,d (%.1f%%)%n", s, n, pct(n, totalEpisodes));
+            }
+
+            printHist("  episodes-per-thread histogram:", PER_THREAD_LABELS, perThreadCounts());
+            printHist("  records-per-episode histogram:", RECORD_LABELS, recordBuckets);
+            printHist("  episode-duration histogram:", DURATION_LABELS, durationBuckets);
+
+            System.out.println("  10 longest episodes (by record count):");
+            List<Episode> top = new ArrayList<>(longest);
+            top.sort((a, b) -> Integer.compare(b.size(), a.size()));
+            for (Episode e : top) {
+                System.out.printf("      thread=%s size=%d status=%s start=%s%n",
+                        e.threadId(), e.size(), e.status(), e.start());
+                System.out.printf("        seq: %s%n", truncate(String.join(" -> ", e.callSiteSequence()), 300));
+            }
+        }
+
+        private long[] perThreadCounts() {
+            long[] counts = new long[PER_THREAD_BUCKETS.length];
+            for (long c : perThread.values()) {
+                counts[bucketIndex(PER_THREAD_BUCKETS, c)]++;
+            }
+            return counts;
+        }
+    }
+
+    // bucket definitions: {upperBoundInclusive, label-index} — parallel to labels
+    private static final long[] RECORD_BUCKETS   = {1, 5, 10, 25, 100, 1000, Long.MAX_VALUE};
+    private static final String[] RECORD_LABELS  = {"1", "2-5", "6-10", "11-25", "26-100", "101-1000", ">1000"};
+    private static final long[] PER_THREAD_BUCKETS  = {1, 5, 25, 100, 1000, Long.MAX_VALUE};
+    private static final String[] PER_THREAD_LABELS = {"1", "2-5", "6-25", "26-100", "101-1000", ">1000"};
+    private static final long[] DURATION_BUCKETS = {100, 1000, 5000, 30000, 300000, Long.MAX_VALUE};
+    private static final String[] DURATION_LABELS = {"<100ms", "<1s", "<5s", "<30s", "<5m", "longer"};
+
+    private static int bucketIndex(long[] bounds, long value) {
+        for (int i = 0; i < bounds.length; i++) {
+            if (value <= bounds[i]) {
+                return i;
+            }
+        }
+        return bounds.length - 1;
+    }
+
+    private static void printHist(String title, String[] labels, long[] counts) {
+        System.out.println(title);
+        long total = 0;
+        for (long c : counts) {
+            total += c;
+        }
+        for (int i = 0; i < counts.length; i++) {
+            System.out.printf("      %-9s: %,10d (%5.1f%%)%n", labels[i], counts[i], pct(counts[i], total));
+        }
+    }
+
+    private static long durationMillis(Episode e) {
+        Instant s = e.start();
+        Instant en = e.end();
+        if (s == null || en == null) {
+            return 0L;
+        }
+        return Math.max(0L, Duration.between(s, en).toMillis());
+    }
+
     // -- tfa detect-format <file> -------------------------------------------
 
     private static void detectFormat(Args args) {
@@ -199,6 +344,9 @@ public final class Main {
                   tfa parse <dir> [--profile <yaml>] [--profile-name <name>]
                                   [--threshold 0.95] [--sample 1000]
                       Parse a directory and print ingestion statistics.
+
+                  tfa segment <dir> --config <yaml>
+                      Segment the corpus into episodes and print distributions.
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.
