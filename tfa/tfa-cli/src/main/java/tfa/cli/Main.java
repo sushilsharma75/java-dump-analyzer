@@ -9,7 +9,9 @@ import tfa.ingest.MatchRateReport;
 import tfa.ingest.ParseStats;
 import tfa.ingest.ProfileLoader;
 import tfa.ingest.RecordParser;
+import tfa.baseline.ConsensusBuilder;
 import tfa.cluster.SignatureClusterer;
+import tfa.model.Baseline;
 import tfa.model.Episode;
 import tfa.model.FlowCluster;
 import tfa.model.LogRecord;
@@ -47,6 +49,7 @@ public final class Main {
                 case "parse" -> parse(new Args(argv, 1));
                 case "segment" -> segment(new Args(argv, 1));
                 case "cluster" -> cluster(new Args(argv, 1));
+                case "baseline" -> baseline(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
@@ -286,26 +289,15 @@ public final class Main {
             return;
         }
         AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
-        RecordParser parser = new RecordParser(config.profile());
-        FileSetReader reader = new FileSetReader(Path.of(dir), parser, new ParseStats());
-        reader.requireMatchRate(config.sampleLines(), config.matchThreshold());
-
-        FlowKeyStrategy strategy = config.segmentation().buildStrategy();
-        StreamingSegmenter segmenter = new StreamingSegmenter(strategy);
         int k = config.clustering().signatureK();
         int minSize = config.clustering().minClusterSize();
         int ceiling = config.clustering().clusterCeiling();
 
         System.out.printf("profile           : %s%n", config.profile().name());
-        System.out.printf("strategy          : %s%n", strategy.name());
+        System.out.printf("strategy          : %s%n", config.segmentation().strategy());
         System.out.printf("signature K       : %d   (min cluster size %d, ceiling %d)%n", k, minSize, ceiling);
 
-        SignatureClusterer clusterer = new SignatureClusterer(k);
-        try (Stream<LogRecord> records = reader.records()) {
-            segmenter.segment(records, clusterer::add);
-        }
-        List<FlowCluster> clusters = clusterer.finish(minSize);
-
+        List<FlowCluster> clusters = clustersFrom(Path.of(dir), config);
         long totalEpisodes = clusters.stream().mapToLong(FlowCluster::size).sum();
         long underSampled = clusters.stream().filter(FlowCluster::isUnderSampled).count();
 
@@ -346,6 +338,76 @@ public final class Main {
 
     private static final long[] CLUSTER_SIZE_BUCKETS = {1, 9, 49, 199, 999, Long.MAX_VALUE};
     private static final String[] CLUSTER_SIZE_LABELS = {"1", "2-9", "10-49", "50-199", "200-999", ">=1000"};
+
+    /** Shared pipeline: ingest -> segment -> cluster, returning clusters sorted by size. */
+    private static List<FlowCluster> clustersFrom(Path dir, AnalysisConfig config) {
+        RecordParser parser = new RecordParser(config.profile());
+        FileSetReader reader = new FileSetReader(dir, parser, new ParseStats());
+        reader.requireMatchRate(config.sampleLines(), config.matchThreshold());
+        StreamingSegmenter segmenter = new StreamingSegmenter(config.segmentation().buildStrategy());
+        SignatureClusterer clusterer = new SignatureClusterer(config.clustering().signatureK());
+        try (Stream<LogRecord> records = reader.records()) {
+            segmenter.segment(records, clusterer::add);
+        }
+        return clusterer.finish(config.clustering().minClusterSize());
+    }
+
+    // -- tfa baseline <dir> --config <yaml> ---------------------------------
+
+    private static void baseline(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        if (dir == null || configPath == null) {
+            System.err.println("usage: tfa baseline <dir> --config <yaml>");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+        List<FlowCluster> clusters = clustersFrom(Path.of(dir), config);
+
+        System.out.printf("profile           : %s%n", config.profile().name());
+        System.out.printf("strategy          : %s%n", config.segmentation().strategy());
+        if (config.baseline().baselineStart() != null || config.baseline().baselineEnd() != null) {
+            System.out.printf("baseline window   : %s -> %s%n",
+                    config.baseline().baselineStart(), config.baseline().baselineEnd());
+        }
+
+        int baselined = 0;
+        for (FlowCluster c : clusters) {
+            if (c.isUnderSampled()) {
+                continue;
+            }
+            Baseline b = ConsensusBuilder.build(c, config.baseline());
+            if (b == null) {
+                continue;
+            }
+            baselined++;
+            System.out.println("==========================================================");
+            System.out.printf("cluster: %s%n", c.signature());
+            System.out.printf("  episodes baselined : %d (of %d in cluster)%n", b.episodesUsed(), c.size());
+            System.out.printf("  modal sequence     : %.1f%% (%d episodes)%n",
+                    b.modalShare() * 100, b.modalCount());
+            System.out.printf("     %s%n", truncate(String.join(" -> ", b.modalSequence()), 400));
+            if (!b.alternatives().isEmpty()) {
+                System.out.println("  top alternative sequences:");
+                for (Baseline.SequenceShare alt : b.alternatives()) {
+                    System.out.printf("     %5.1f%% (%d)  %s%n", alt.share() * 100, alt.count(),
+                            truncate(String.join(" -> ", alt.sequence()), 300));
+                }
+            }
+            List<Baseline.TransitionTiming> slow = b.slowestByP95(5);
+            if (!slow.isEmpty()) {
+                System.out.println("  slowest transitions (by p95):");
+                for (Baseline.TransitionTiming t : slow) {
+                    System.out.printf("     p95=%,.0fms median=%,.0fms (n=%d)  %s -> %s%n",
+                            t.p95Millis(), t.medianMillis(), t.count(), t.from(), t.to());
+                }
+            }
+        }
+        System.out.println("==========================================================");
+        System.out.printf("baselined %d cluster(s); %d under-sampled skipped.%n",
+                baselined, clusters.stream().filter(FlowCluster::isUnderSampled).count());
+    }
 
     // -- tfa detect-format <file> -------------------------------------------
 
@@ -425,6 +487,9 @@ public final class Main {
 
                   tfa cluster <dir> --config <yaml>
                       Cluster episodes by signature and print the distribution.
+
+                  tfa baseline <dir> --config <yaml>
+                      Derive the consensus baseline per cluster and print it.
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.

@@ -144,3 +144,50 @@ clustering:
   minClusterSize: 10
   clusterCeiling: 200
 ```
+
+## Phase 4 — consensus baseline (implemented)
+
+Derives what "normal" looks like per cluster, over **collapsed** call-site
+sequences (loops and retries collapsed to a single element with a repeat count,
+so a retry storm doesn't swamp the comparison). Each `Episode` keeps both forms:
+raw (`callSiteSequence()`) and collapsed (`collapsedSequence()` /
+`collapsedRuns()`).
+
+For each cluster above the minimum size, `ConsensusBuilder` computes a
+`Baseline`:
+
+1. **Modal sequence** — the most frequent exact collapsed sequence, with the
+   share of episodes matching it, plus the top alternative sequences.
+2. **Positional distribution** — per modal position, the frequency of each call
+   site observed there (so a finding can read "94% went to X here").
+3. **Transition probabilities** — P(B follows A) within the cluster.
+4. **Transition timing** — median and p95 elapsed time per transition.
+
+Everything is deterministic (ties broken lexicographically) for reproducibility.
+
+**Baseline windowing**: the baseline can be derived from one time-bounded subset
+(e.g. day 1) and evaluated against another (e.g. day 3). This matters — if the
+defect is present throughout the baseline window, it becomes "normal" and is
+never flagged.
+
+### CLI
+
+```bash
+tfa baseline <dir> --config <yaml>
+```
+
+Prints, per cluster: modal sequence and its share, the top alternative
+sequences, and the slowest transitions by p95.
+
+Config additions:
+
+```yaml
+baseline:
+  window:                     # optional; restricts which episodes form the baseline
+    start: "2026-08-20T00:00:00Z"
+    end:   "2026-08-21T00:00:00Z"
+  evalWindow:                 # optional; restricts which episodes detection evaluates (Phase 5)
+    start: "2026-08-22T00:00:00Z"
+    end:   "2026-08-23T00:00:00Z"
+  alternatives: 3
+```

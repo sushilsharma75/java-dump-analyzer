@@ -24,6 +24,8 @@ public final class Episode {
 
     // cached derived views, invalidated on append
     private List<String> callSiteSequenceCache;
+    private List<Run> collapsedRunsCache;
+    private List<String> collapsedSequenceCache;
 
     public Episode(String threadId) {
         this.threadId = threadId;
@@ -33,6 +35,8 @@ public final class Episode {
     public void add(LogRecord record) {
         records.add(record);
         callSiteSequenceCache = null;
+        collapsedRunsCache = null;
+        collapsedSequenceCache = null;
         if ("ERROR".equalsIgnoreCase(record.level())) {
             hasErrorRecord = true;
         }
@@ -88,6 +92,67 @@ public final class Episode {
             callSiteSequenceCache = Collections.unmodifiableList(seq);
         }
         return callSiteSequenceCache;
+    }
+
+    /**
+     * One collapsed run: a maximal block of consecutive records at the same call
+     * site, carrying the repeat count and the first/last timestamps of the block.
+     */
+    public record Run(String callSite, int count, Instant firstTimestamp, Instant lastTimestamp) {}
+
+    /**
+     * The episode's records with consecutive repeats of the same call site
+     * collapsed into a single {@link Run} carrying a repeat count. Without this,
+     * a retry loop makes edit distance explode and swamps the ranking (§Phase 4).
+     * Null call sites (fallback mode) are skipped.
+     */
+    public List<Run> collapsedRuns() {
+        if (collapsedRunsCache == null) {
+            List<Run> runs = new ArrayList<>();
+            String curCs = null;
+            int count = 0;
+            Instant first = null;
+            Instant last = null;
+            for (LogRecord r : records) {
+                String cs = r.callSite();
+                if (cs == null) {
+                    continue;
+                }
+                if (cs.equals(curCs)) {
+                    count++;
+                    last = r.timestamp();
+                } else {
+                    if (curCs != null) {
+                        runs.add(new Run(curCs, count, first, last));
+                    }
+                    curCs = cs;
+                    count = 1;
+                    first = r.timestamp();
+                    last = r.timestamp();
+                }
+            }
+            if (curCs != null) {
+                runs.add(new Run(curCs, count, first, last));
+            }
+            collapsedRunsCache = Collections.unmodifiableList(runs);
+        }
+        return collapsedRunsCache;
+    }
+
+    /**
+     * The collapsed call-site shape: {@link #collapsedRuns()} reduced to the
+     * ordered list of call sites (repeat counts dropped). This is what baselining
+     * and comparison operate on.
+     */
+    public List<String> collapsedSequence() {
+        if (collapsedSequenceCache == null) {
+            List<String> seq = new ArrayList<>();
+            for (Run run : collapsedRuns()) {
+                seq.add(run.callSite());
+            }
+            collapsedSequenceCache = Collections.unmodifiableList(seq);
+        }
+        return collapsedSequenceCache;
     }
 
     @Override

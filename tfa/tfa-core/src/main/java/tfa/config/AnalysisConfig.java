@@ -10,6 +10,7 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -44,14 +45,17 @@ public final class AnalysisConfig {
     private final int sampleLines;
     private final SegmentationConfig segmentation;
     private final ClusteringConfig clustering;
+    private final BaselineConfig baseline;
 
     public AnalysisConfig(FormatProfile profile, double matchThreshold, int sampleLines,
-                          SegmentationConfig segmentation, ClusteringConfig clustering) {
+                          SegmentationConfig segmentation, ClusteringConfig clustering,
+                          BaselineConfig baseline) {
         this.profile = profile;
         this.matchThreshold = matchThreshold;
         this.sampleLines = sampleLines;
         this.segmentation = segmentation;
         this.clustering = clustering;
+        this.baseline = baseline;
     }
 
     public FormatProfile profile()            { return profile; }
@@ -59,6 +63,7 @@ public final class AnalysisConfig {
     public int sampleLines()                  { return sampleLines; }
     public SegmentationConfig segmentation()  { return segmentation; }
     public ClusteringConfig clustering()      { return clustering; }
+    public BaselineConfig baseline()          { return baseline; }
 
     @SuppressWarnings("unchecked")
     public static AnalysisConfig load(Path yaml) {
@@ -81,8 +86,31 @@ public final class AnalysisConfig {
 
         SegmentationConfig seg = resolveSegmentation(doc);
         ClusteringConfig clustering = resolveClustering(doc);
+        BaselineConfig baseline = resolveBaseline(doc);
 
-        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering);
+        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering, baseline);
+    }
+
+    private static BaselineConfig resolveBaseline(Map<String, Object> doc) {
+        Map<String, Object> b = asMap(doc.get("baseline"));
+        if (b == null) {
+            return BaselineConfig.defaults();
+        }
+        Map<String, Object> win = asMap(b.get("window"));
+        Map<String, Object> eval = asMap(b.get("evalWindow"));
+        Instant bStart = instant(win, "start");
+        Instant bEnd = instant(win, "end");
+        Instant eStart = instant(eval, "start");
+        Instant eEnd = instant(eval, "end");
+        int alts = asInt(b.get("alternatives"), 3);
+        return new BaselineConfig(bStart, bEnd, eStart, eEnd, alts);
+    }
+
+    private static Instant instant(Map<String, Object> map, String key) {
+        if (map == null || map.get(key) == null) {
+            return null;
+        }
+        return Instant.parse(String.valueOf(map.get(key)));
     }
 
     private static ClusteringConfig resolveClustering(Map<String, Object> doc) {
