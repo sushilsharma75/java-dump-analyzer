@@ -113,3 +113,34 @@ segmentation:
 > measures the rate, and the dedupe decision is deferred. Under `IDLE_GAP`,
 > duplicated records from a second appender file can surface as extra
 > single-record episodes; `ENTRY_MARKER` drops them as orphan non-entry records.
+
+## Phase 3 — flow clustering (implemented)
+
+Groups episodes that represent the same kind of flow, so a login flow and a
+nightly batch job are never compared against each other.
+
+- **Signature = the first K call sites** of the episode (K configurable, default
+  3). Episodes that begin identically are the same kind of work.
+- Clusters below `minClusterSize` (default 10) are marked **UNDER_SAMPLED** and
+  excluded from baselining — you cannot derive a consensus from three examples —
+  but they are still reported, since a rare flow is itself interesting.
+- A cluster count above `clusterCeiling` (default 200) warns that K is too large.
+
+### CLI
+
+```bash
+tfa cluster <dir> --config <yaml>
+```
+
+Prints cluster count, episode total, under-sampled count, a cluster-size
+distribution, and the top 20 clusters by size with their signature and a
+representative episode.
+
+Config additions:
+
+```yaml
+clustering:
+  signatureK: 3
+  minClusterSize: 10
+  clusterCeiling: 200
+```

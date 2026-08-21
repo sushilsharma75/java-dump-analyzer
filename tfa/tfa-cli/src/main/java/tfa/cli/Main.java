@@ -9,7 +9,9 @@ import tfa.ingest.MatchRateReport;
 import tfa.ingest.ParseStats;
 import tfa.ingest.ProfileLoader;
 import tfa.ingest.RecordParser;
+import tfa.cluster.SignatureClusterer;
 import tfa.model.Episode;
+import tfa.model.FlowCluster;
 import tfa.model.LogRecord;
 import tfa.model.TerminalStatus;
 import tfa.segment.FlowKeyStrategy;
@@ -44,6 +46,7 @@ public final class Main {
             switch (cmd) {
                 case "parse" -> parse(new Args(argv, 1));
                 case "segment" -> segment(new Args(argv, 1));
+                case "cluster" -> cluster(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
@@ -272,6 +275,78 @@ public final class Main {
         return Math.max(0L, Duration.between(s, en).toMillis());
     }
 
+    // -- tfa cluster <dir> --config <yaml> ----------------------------------
+
+    private static void cluster(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        if (dir == null || configPath == null) {
+            System.err.println("usage: tfa cluster <dir> --config <yaml>");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+        RecordParser parser = new RecordParser(config.profile());
+        FileSetReader reader = new FileSetReader(Path.of(dir), parser, new ParseStats());
+        reader.requireMatchRate(config.sampleLines(), config.matchThreshold());
+
+        FlowKeyStrategy strategy = config.segmentation().buildStrategy();
+        StreamingSegmenter segmenter = new StreamingSegmenter(strategy);
+        int k = config.clustering().signatureK();
+        int minSize = config.clustering().minClusterSize();
+        int ceiling = config.clustering().clusterCeiling();
+
+        System.out.printf("profile           : %s%n", config.profile().name());
+        System.out.printf("strategy          : %s%n", strategy.name());
+        System.out.printf("signature K       : %d   (min cluster size %d, ceiling %d)%n", k, minSize, ceiling);
+
+        SignatureClusterer clusterer = new SignatureClusterer(k);
+        try (Stream<LogRecord> records = reader.records()) {
+            segmenter.segment(records, clusterer::add);
+        }
+        List<FlowCluster> clusters = clusterer.finish(minSize);
+
+        long totalEpisodes = clusters.stream().mapToLong(FlowCluster::size).sum();
+        long underSampled = clusters.stream().filter(FlowCluster::isUnderSampled).count();
+
+        System.out.println("----------------------------------------------------------");
+        System.out.println("CLUSTERING");
+        System.out.printf("  clusters        : %,d%n", clusters.size());
+        System.out.printf("  episodes        : %,d%n", totalEpisodes);
+        System.out.printf("  under-sampled   : %,d (size < %d, excluded from baselining)%n",
+                underSampled, minSize);
+        if (clusters.size() > ceiling) {
+            System.out.printf("  WARNING: cluster count %,d exceeds ceiling %,d - K=%d may be too large.%n",
+                    clusters.size(), ceiling, k);
+        }
+
+        long[] counts = new long[CLUSTER_SIZE_BUCKETS.length];
+        for (FlowCluster c : clusters) {
+            counts[bucketIndex(CLUSTER_SIZE_BUCKETS, c.size())]++;
+        }
+        printHist("  cluster-size distribution:", CLUSTER_SIZE_LABELS, counts);
+
+        System.out.println("  top 20 clusters by size:");
+        int shown = 0;
+        for (FlowCluster c : clusters) {
+            if (shown++ >= 20) {
+                break;
+            }
+            Episode rep = c.representative();
+            System.out.printf("      [%,d]%s  %s%n", c.size(),
+                    c.isUnderSampled() ? " UNDER_SAMPLED" : "", c.signature());
+            if (rep != null) {
+                System.out.printf("        rep: thread=%s start=%s status=%s%n",
+                        rep.threadId(), rep.start(), rep.status());
+                System.out.printf("        seq: %s%n",
+                        truncate(String.join(" -> ", rep.callSiteSequence()), 300));
+            }
+        }
+    }
+
+    private static final long[] CLUSTER_SIZE_BUCKETS = {1, 9, 49, 199, 999, Long.MAX_VALUE};
+    private static final String[] CLUSTER_SIZE_LABELS = {"1", "2-9", "10-49", "50-199", "200-999", ">=1000"};
+
     // -- tfa detect-format <file> -------------------------------------------
 
     private static void detectFormat(Args args) {
@@ -347,6 +422,9 @@ public final class Main {
 
                   tfa segment <dir> --config <yaml>
                       Segment the corpus into episodes and print distributions.
+
+                  tfa cluster <dir> --config <yaml>
+                      Cluster episodes by signature and print the distribution.
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.

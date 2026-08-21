@@ -43,19 +43,22 @@ public final class AnalysisConfig {
     private final double matchThreshold;
     private final int sampleLines;
     private final SegmentationConfig segmentation;
+    private final ClusteringConfig clustering;
 
     public AnalysisConfig(FormatProfile profile, double matchThreshold, int sampleLines,
-                          SegmentationConfig segmentation) {
+                          SegmentationConfig segmentation, ClusteringConfig clustering) {
         this.profile = profile;
         this.matchThreshold = matchThreshold;
         this.sampleLines = sampleLines;
         this.segmentation = segmentation;
+        this.clustering = clustering;
     }
 
     public FormatProfile profile()            { return profile; }
     public double matchThreshold()            { return matchThreshold; }
     public int sampleLines()                  { return sampleLines; }
     public SegmentationConfig segmentation()  { return segmentation; }
+    public ClusteringConfig clustering()      { return clustering; }
 
     @SuppressWarnings("unchecked")
     public static AnalysisConfig load(Path yaml) {
@@ -77,8 +80,20 @@ public final class AnalysisConfig {
         int sampleLines = ingest == null ? 1000 : asInt(ingest.get("sampleLines"), 1000);
 
         SegmentationConfig seg = resolveSegmentation(doc);
+        ClusteringConfig clustering = resolveClustering(doc);
 
-        return new AnalysisConfig(profile, threshold, sampleLines, seg);
+        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering);
+    }
+
+    private static ClusteringConfig resolveClustering(Map<String, Object> doc) {
+        Map<String, Object> c = asMap(doc.get("clustering"));
+        if (c == null) {
+            return ClusteringConfig.defaults();
+        }
+        int k = asInt(c.get("signatureK"), 3);
+        int minSize = asInt(c.get("minClusterSize"), 10);
+        int ceiling = asInt(c.get("clusterCeiling"), 200);
+        return new ClusteringConfig(k, minSize, ceiling);
     }
 
     @SuppressWarnings("unchecked")
