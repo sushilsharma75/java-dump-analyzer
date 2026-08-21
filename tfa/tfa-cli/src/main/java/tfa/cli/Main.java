@@ -9,6 +9,7 @@ import tfa.ingest.MatchRateReport;
 import tfa.ingest.ParseStats;
 import tfa.ingest.ProfileLoader;
 import tfa.ingest.RecordParser;
+import tfa.Version;
 import tfa.baseline.ConsensusBuilder;
 import tfa.cluster.SignatureClusterer;
 import tfa.detect.DetectionEngine;
@@ -17,6 +18,13 @@ import tfa.model.Baseline;
 import tfa.model.Episode;
 import tfa.model.Finding;
 import tfa.model.FlowCluster;
+import tfa.rank.FindingRanker;
+import tfa.rank.Suppressions;
+import tfa.report.CorpusFingerprint;
+import tfa.report.Hashing;
+import tfa.report.JsonReporter;
+import tfa.report.Report;
+import tfa.report.TextReporter;
 import tfa.model.LogRecord;
 import tfa.model.TerminalStatus;
 import tfa.segment.FlowKeyStrategy;
@@ -54,6 +62,7 @@ public final class Main {
                 case "cluster" -> cluster(new Args(argv, 1));
                 case "baseline" -> baseline(new Args(argv, 1));
                 case "detect" -> detect(new Args(argv, 1));
+                case "analyze" -> analyze(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
@@ -413,6 +422,68 @@ public final class Main {
                 baselined, clusters.stream().filter(FlowCluster::isUnderSampled).count());
     }
 
+    // -- tfa analyze <dir> --config <yaml> --out <file> ---------------------
+
+    private static void analyze(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        if (dir == null || configPath == null) {
+            System.err.println("usage: tfa analyze <dir> --config <yaml> [--out <file>] [--suppressions <file>]");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+
+        // ingest -> segment -> cluster (capturing the ordered files for the fingerprint)
+        RecordParser parser = new RecordParser(config.profile());
+        FileSetReader reader = new FileSetReader(Path.of(dir), parser, new ParseStats());
+        reader.requireMatchRate(config.sampleLines(), config.matchThreshold());
+        List<java.nio.file.Path> orderedFiles = reader.orderedFiles();
+        StreamingSegmenter segmenter = new StreamingSegmenter(config.segmentation().buildStrategy());
+        SignatureClusterer clusterer = new SignatureClusterer(config.clustering().signatureK());
+        try (Stream<LogRecord> records = reader.records()) {
+            segmenter.segment(records, clusterer::add);
+        }
+        List<FlowCluster> clusters = clusterer.finish(config.clustering().minClusterSize());
+
+        // detect -> rank
+        DetectionResult detection = new DetectionEngine(config.detection(), config.baseline()).detect(clusters);
+        Suppressions suppressions = Suppressions.none();
+        String suppPath = args.get("suppressions", null);
+        if (suppPath != null) {
+            suppressions = Suppressions.load(Path.of(suppPath));
+        }
+        FindingRanker.RankingResult ranking =
+                new FindingRanker(config.ranking(), suppressions).rank(detection);
+
+        // assemble the report
+        CorpusFingerprint fingerprint = CorpusFingerprint.of(
+                orderedFiles, detection.corpusStart(), detection.corpusEnd());
+        String configHash;
+        try {
+            configHash = Hashing.sha256Hex(java.nio.file.Files.readAllBytes(Path.of(configPath)));
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        Report report = new Report(
+                Version.VERSION, java.time.Instant.now(), configHash, fingerprint,
+                config.profile().name(), config.segmentation().strategy().name(),
+                detection.episodesEvaluated(), detection.episodesCensored(), detection.marginMillis(),
+                ranking.ranked().size(), ranking.suppressedCount(), ranking.top());
+
+        TextReporter.render(report, System.out);
+
+        String out = args.get("out", null);
+        if (out != null) {
+            try {
+                java.nio.file.Files.writeString(Path.of(out), JsonReporter.render(report));
+                System.out.printf("%n[JSON report written to %s]%n", out);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+    }
+
     // -- tfa detect <dir> --config <yaml> -----------------------------------
 
     private static void detect(Args args) {
@@ -535,6 +606,9 @@ public final class Main {
 
                   tfa detect <dir> --config <yaml>
                       Run the detectors and list raw (unranked) findings.
+
+                  tfa analyze <dir> --config <yaml> [--out <file>] [--suppressions <file>]
+                      Run the full pipeline and print the ranked report (JSON to --out).
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.

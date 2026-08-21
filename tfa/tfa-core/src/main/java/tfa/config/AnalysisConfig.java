@@ -47,10 +47,11 @@ public final class AnalysisConfig {
     private final ClusteringConfig clustering;
     private final BaselineConfig baseline;
     private final DetectionConfig detection;
+    private final RankingConfig ranking;
 
     public AnalysisConfig(FormatProfile profile, double matchThreshold, int sampleLines,
                           SegmentationConfig segmentation, ClusteringConfig clustering,
-                          BaselineConfig baseline, DetectionConfig detection) {
+                          BaselineConfig baseline, DetectionConfig detection, RankingConfig ranking) {
         this.profile = profile;
         this.matchThreshold = matchThreshold;
         this.sampleLines = sampleLines;
@@ -58,6 +59,7 @@ public final class AnalysisConfig {
         this.clustering = clustering;
         this.baseline = baseline;
         this.detection = detection;
+        this.ranking = ranking;
     }
 
     public FormatProfile profile()            { return profile; }
@@ -67,6 +69,7 @@ public final class AnalysisConfig {
     public ClusteringConfig clustering()      { return clustering; }
     public BaselineConfig baseline()          { return baseline; }
     public DetectionConfig detection()        { return detection; }
+    public RankingConfig ranking()            { return ranking; }
 
     @SuppressWarnings("unchecked")
     public static AnalysisConfig load(Path yaml) {
@@ -91,8 +94,27 @@ public final class AnalysisConfig {
         ClusteringConfig clustering = resolveClustering(doc);
         BaselineConfig baseline = resolveBaseline(doc);
         DetectionConfig detection = resolveDetection(doc);
+        RankingConfig ranking = resolveRanking(doc);
 
-        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering, baseline, detection);
+        return new AnalysisConfig(profile, threshold, sampleLines, seg, clustering,
+                baseline, detection, ranking);
+    }
+
+    private static RankingConfig resolveRanking(Map<String, Object> doc) {
+        Map<String, Object> r = asMap(doc.get("ranking"));
+        if (r == null) {
+            return RankingConfig.defaults();
+        }
+        Map<String, Object> w = asMap(r.get("weights"));
+        RankingConfig d = RankingConfig.defaults();
+        double rarity = w == null ? d.rarityWeight() : asDouble(w.get("rarity"), d.rarityWeight());
+        double severity = w == null ? d.severityWeight() : asDouble(w.get("severity"), d.severityWeight());
+        double error = w == null ? d.errorWeight() : asDouble(w.get("error"), d.errorWeight());
+        double magnitude = w == null ? d.magnitudeWeight() : asDouble(w.get("magnitude"), d.magnitudeWeight());
+        double clusterSize = w == null ? d.clusterSizeWeight() : asDouble(w.get("clusterSize"), d.clusterSizeWeight());
+        double penalty = asDouble(r.get("benignVariantPenalty"), d.benignVariantPenalty());
+        int topN = asInt(r.get("topN"), d.topN());
+        return new RankingConfig(rarity, severity, error, magnitude, clusterSize, penalty, topN);
     }
 
     private static DetectionConfig resolveDetection(Map<String, Object> doc) {

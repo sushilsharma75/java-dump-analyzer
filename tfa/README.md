@@ -237,3 +237,48 @@ detection:
 > cluster; lower K (or the Phase 0 entry analysis) governs this. On the sample
 > corpus, K=2 keeps the divergent error flow in the main cluster and both the
 > divergence and truncation detectors fire on it.
+
+## Phase 6 — ranking and report (implemented)
+
+Turns raw findings into twenty an engineer can act on.
+
+- **Deduplication** — many episodes diverging at the same call site in the same
+  way collapse into one finding with an occurrence count (not fifty findings).
+- **Scoring** (weights from config, tunable without a rebuild) combines rarity
+  (uncommon within its cluster), severity (TRUNCATION > DIVERGENCE > TIMING),
+  error/stack-trace presence, TIMING magnitude, and cluster-size trust. The
+  critical guard: a rare path that **completes normally is a variant, not a
+  defect** — a clean-completing DIVERGENCE is damped by the benign-variant
+  penalty, so rarity alone isn't a false-positive firehose.
+- **Suppressions** — a `suppressions.yaml` of (cluster signature, divergence
+  call site, type) tuples with reasons; suppressed findings are excluded from
+  the top N but counted in a one-line summary.
+- **Reproducibility** — deterministic scoring and stable, fully-specified tie
+  breaks, so the same input + config yields byte-identical output (bar the run
+  timestamp). Every report header embeds tool version, config hash, corpus
+  fingerprint (file names, sizes, timestamp range), and run timestamp.
+- **Report** — top N findings, each with rank, score, type, occurrence count,
+  cluster signature + size, the divergence point (what the majority did and its
+  share), a representative thread/timestamp, and the raw log lines 5 before / 5
+  after the divergence point, verbatim including stack traces. Two emitters:
+  plain text to stdout and JSON to a file.
+
+### CLI
+
+```bash
+tfa analyze <dir> --config <yaml> [--out report.json] [--suppressions suppressions.yaml]
+```
+
+Config additions:
+
+```yaml
+ranking:
+  weights:
+    rarity: 1.0
+    severity: 1.0
+    error: 0.5
+    magnitude: 0.5
+    clusterSize: 0.5
+  benignVariantPenalty: 0.2
+  topN: 20
+```
