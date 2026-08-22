@@ -9,6 +9,7 @@ import tfa.ingest.MatchRateReport;
 import tfa.ingest.ParseStats;
 import tfa.ingest.ProfileLoader;
 import tfa.ingest.RecordParser;
+import tfa.Analysis;
 import tfa.Version;
 import tfa.baseline.ConsensusBuilder;
 import tfa.cluster.SignatureClusterer;
@@ -25,6 +26,9 @@ import tfa.report.Hashing;
 import tfa.report.JsonReporter;
 import tfa.report.Report;
 import tfa.report.TextReporter;
+import tfa.validate.Explainer;
+import tfa.validate.GroundTruth;
+import tfa.validate.Validator;
 import tfa.model.LogRecord;
 import tfa.model.TerminalStatus;
 import tfa.segment.FlowKeyStrategy;
@@ -63,6 +67,8 @@ public final class Main {
                 case "baseline" -> baseline(new Args(argv, 1));
                 case "detect" -> detect(new Args(argv, 1));
                 case "analyze" -> analyze(new Args(argv, 1));
+                case "validate" -> validate(new Args(argv, 1));
+                case "explain" -> explain(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
@@ -433,32 +439,18 @@ public final class Main {
             return;
         }
         AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
-
-        // ingest -> segment -> cluster (capturing the ordered files for the fingerprint)
-        RecordParser parser = new RecordParser(config.profile());
-        FileSetReader reader = new FileSetReader(Path.of(dir), parser, new ParseStats());
-        reader.requireMatchRate(config.sampleLines(), config.matchThreshold());
-        List<java.nio.file.Path> orderedFiles = reader.orderedFiles();
-        StreamingSegmenter segmenter = new StreamingSegmenter(config.segmentation().buildStrategy());
-        SignatureClusterer clusterer = new SignatureClusterer(config.clustering().signatureK());
-        try (Stream<LogRecord> records = reader.records()) {
-            segmenter.segment(records, clusterer::add);
-        }
-        List<FlowCluster> clusters = clusterer.finish(config.clustering().minClusterSize());
-
-        // detect -> rank
-        DetectionResult detection = new DetectionEngine(config.detection(), config.baseline()).detect(clusters);
         Suppressions suppressions = Suppressions.none();
         String suppPath = args.get("suppressions", null);
         if (suppPath != null) {
             suppressions = Suppressions.load(Path.of(suppPath));
         }
-        FindingRanker.RankingResult ranking =
-                new FindingRanker(config.ranking(), suppressions).rank(detection);
 
-        // assemble the report
+        Analysis.Result r = Analysis.analyze(Path.of(dir), config, suppressions);
+        DetectionResult detection = r.detection();
+        FindingRanker.RankingResult ranking = r.ranking();
+
         CorpusFingerprint fingerprint = CorpusFingerprint.of(
-                orderedFiles, detection.corpusStart(), detection.corpusEnd());
+                r.orderedFiles(), detection.corpusStart(), detection.corpusEnd());
         String configHash;
         try {
             configHash = Hashing.sha256Hex(java.nio.file.Files.readAllBytes(Path.of(configPath)));
@@ -482,6 +474,71 @@ public final class Main {
                 throw new java.io.UncheckedIOException(e);
             }
         }
+    }
+
+    // -- tfa validate <dir> --config <yaml> --ground-truth <file> -----------
+
+    private static void validate(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        String gtPath = args.get("ground-truth", null);
+        if (dir == null || configPath == null || gtPath == null) {
+            System.err.println("usage: tfa validate <dir> --config <yaml> --ground-truth <file>");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+        Analysis.Result result = Analysis.analyze(Path.of(dir), config);
+        GroundTruth truth = GroundTruth.load(Path.of(gtPath));
+        Validator.ValidationReport report = new Validator(result, config).validate(truth);
+
+        System.out.println("==================================================================");
+        System.out.println("TFA VALIDATION");
+        System.out.println("==================================================================");
+        for (Validator.DefectOutcome o : report.outcomes()) {
+            String status = o.withinTop(report.topN()) ? "PASS" : (o.found() ? "WARN" : "FAIL");
+            System.out.printf("  [%s] %s - %s%n", status, o.id(), o.description());
+            if (o.found()) {
+                System.out.printf("        found at rank #%d (%s); %s%n", o.rank(), o.type(), o.note());
+            } else {
+                System.out.printf("        %s%n", o.note());
+            }
+        }
+        System.out.println("------------------------------------------------------------------");
+        System.out.printf("  %d of %d defects in the top %d.%n",
+                report.passed(), report.outcomes().size(), report.topN());
+        if (report.allPassed()) {
+            System.out.println("  SUCCESS TEST PASSED.");
+        } else {
+            System.out.println("  SUCCESS TEST NOT PASSED. Use `tfa explain` on a missing defect.");
+            System.exit(4);
+        }
+    }
+
+    // -- tfa explain <dir> --config <yaml> --thread <id> --at <timestamp> ----
+
+    private static void explain(Args args) {
+        String dir = args.positional(0);
+        String configPath = args.get("config", null);
+        String thread = args.get("thread", null);
+        String at = args.get("at", null);
+        if (dir == null || configPath == null || thread == null || at == null) {
+            System.err.println("usage: tfa explain <dir> --config <yaml> --thread <id> --at <timestamp>");
+            System.exit(1);
+            return;
+        }
+        AnalysisConfig config = AnalysisConfig.load(Path.of(configPath));
+        Analysis.Result result = Analysis.analyze(Path.of(dir), config);
+        Explainer.Trace trace = new Explainer(result, config)
+                .explain(thread, java.time.Instant.parse(at));
+
+        System.out.println("==================================================================");
+        System.out.printf("TFA EXPLAIN - thread %s at %s%n", thread, at);
+        System.out.println("==================================================================");
+        for (String l : trace.lines()) {
+            System.out.println("  " + l);
+        }
+        System.out.println("==================================================================");
     }
 
     // -- tfa detect <dir> --config <yaml> -----------------------------------
@@ -588,7 +645,7 @@ public final class Main {
 
     private static void usage() {
         System.out.println("""
-                tfa — Thread Flow Analyzer
+                tfa - Thread Flow Analyzer
 
                 Usage:
                   tfa parse <dir> [--profile <yaml>] [--profile-name <name>]
@@ -609,6 +666,12 @@ public final class Main {
 
                   tfa analyze <dir> --config <yaml> [--out <file>] [--suppressions <file>]
                       Run the full pipeline and print the ranked report (JSON to --out).
+
+                  tfa validate <dir> --config <yaml> --ground-truth <file>
+                      Check that each known defect appears in the findings, and at what rank.
+
+                  tfa explain <dir> --config <yaml> --thread <id> --at <timestamp>
+                      Print the full reasoning trail for one episode.
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.

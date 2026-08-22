@@ -282,3 +282,42 @@ ranking:
   benignVariantPenalty: 0.2
   topN: 20
 ```
+
+## Phase 7 — validation and explain (implemented)
+
+- **`Analysis.analyze(Path, AnalysisConfig)`** — the library's public entry point
+  (the future POSTMORTEM integration seam): runs the whole pipeline and returns
+  the clusters, detection, and ranking.
+- **`tfa validate`** — reads `validation/ground-truth.yaml` (known defects
+  recorded *before* building, so the ranking isn't fitted to them) and reports,
+  for each defect, whether it appears in the findings and **at what rank**. The
+  success test passes when every defect is in the top N.
+- **`tfa explain`** — the debugging tool for when validation fails. For one
+  episode it prints the full reasoning trail: which cluster it landed in, the
+  baseline modal sequence, its own sequence, what each detector scored, and — if
+  it was not reported — precisely which threshold excluded it (under-sampled
+  cluster, outside the eval window, boundary-censored, or simply matches the
+  consensus).
+
+### CLI
+
+```bash
+tfa validate <dir> --config <yaml> --ground-truth validation/ground-truth.yaml
+tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
+```
+
+`validation/ground-truth.example.yaml` shows the format.
+
+## Full command list
+
+| Command | Purpose |
+|---|---|
+| `tfa parse` | Ingestion statistics |
+| `tfa detect-format` | Infer a format profile from a sample |
+| `tfa segment` | Episode distributions |
+| `tfa cluster` | Flow-cluster distribution |
+| `tfa baseline` | Consensus baseline per cluster |
+| `tfa detect` | Raw (unranked) findings |
+| `tfa analyze` | Full pipeline → ranked report (text + JSON) |
+| `tfa validate` | Check findings against ground truth |
+| `tfa explain` | Full reasoning trail for one episode |

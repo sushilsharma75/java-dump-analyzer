@@ -1,0 +1,10 @@
+# Ground truth is recorded BEFORE building, so the ranking is not fitted to it (§6).
+# This example is tied to the Phase 0 synthetic corpus; replace with the real defect.
+defects:
+  - id: DEF-1
+    threadId: exec-1
+    timestampWindow:
+      start: "2026-08-20T10:11:00Z"
+      end:   "2026-08-20T10:12:00Z"
+    expectedDivergenceCallSite: "com.acme.repo.OrderRepository:30"
+    description: "OrderRepository DB timeout: wrong branch that errors and never completes"
