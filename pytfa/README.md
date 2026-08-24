@@ -1,0 +1,78 @@
+# tfa (Python) — Thread Flow Analyzer
+
+A pure-Python port of the Java Thread Flow Analyzer. Reconstructs per-thread
+execution flows from an offline log dump, compares flows of the same kind against
+each other, and ranks the deviations. **The population is the baseline** — no
+golden path is authored. Runs locally and offline, streaming, with flat memory.
+
+This is a faithful, feature-complete port of the Java implementation under
+`../tfa`: the same pipeline, the same config format, the same CLI commands, the
+same detectors and ranking, and the same local web UI. It produces the same
+findings (verified against the Java build on the sample corpus).
+
+## Install
+
+```bash
+cd pytfa
+python -m pip install -e .          # installs the `tfa` console script + PyYAML
+# or, without installing:  run `python -m tfa.cli ...` from this directory
+```
+
+Requires Python 3.10+. Dev/test extra: `pip install -e ".[test]"`.
+
+## Commands
+
+```bash
+tfa parse <dir> [--threshold 0.95] [--sample 1000]     # ingestion statistics
+tfa detect-format <file> [--sample 500]                # infer a format profile
+tfa segment  <dir> --config <yaml>                      # episode distributions
+tfa cluster  <dir> --config <yaml>                      # flow-cluster distribution
+tfa baseline <dir> --config <yaml>                      # consensus baseline per cluster
+tfa detect   <dir> --config <yaml>                      # raw (unranked) findings
+tfa analyze  <dir> --config <yaml> [--out report.json] [--suppressions <yaml>]
+tfa validate <dir> --config <yaml> --ground-truth <yaml>
+tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
+tfa serve [--port 8080]                                 # local web UI
+```
+
+(Without installing, replace `tfa` with `python -m tfa.cli`.)
+
+## Package layout
+
+| Module | Java counterpart |
+|---|---|
+| `tfa/model.py` | `tfa.model` — LogRecord, Episode, FlowCluster, Baseline, Finding, enums |
+| `tfa/ingest.py` | `tfa.ingest` — FormatProfile, RecordParser, FileSetReader, FormatDetector |
+| `tfa/config.py` | `tfa.config` — AnalysisConfig + sub-configs, YAML loading |
+| `tfa/segment.py` | `tfa.segment` — FlowKeyStrategy + Entry/IdleGap/CorrelationId, StreamingSegmenter |
+| `tfa/cluster.py` | `tfa.cluster` — SignatureClusterer |
+| `tfa/baseline.py` | `tfa.baseline` — ConsensusBuilder |
+| `tfa/detect.py` | `tfa.detect` — SequenceDiff, detectors, Censor, DetectionEngine |
+| `tfa/rank.py` | `tfa.rank` — FindingRanker, Suppressions |
+| `tfa/report.py` | `tfa.report` — CorpusFingerprint, LogContext, text + JSON reporters |
+| `tfa/validate.py` | `tfa.validate` — GroundTruth, RankIndex, Explainer, Validator |
+| `tfa/testkit.py` | `tfa.testkit` — SyntheticLogGenerator, Scenario, Defects |
+| `tfa/__init__.py` | `tfa.Analysis` — the public `analyze(dir, config)` entry point |
+| `tfa/cli.py` | `tfa.cli.Main` |
+| `tfa/web.py` + `tfa/webui/` | `tfa.cli.WebServer` + `webui/` |
+
+## Tests
+
+```bash
+python -m pytest
+```
+
+## Extras
+
+- `recon_profile_corpus.py` — the Phase 0 throwaway corpus profiler (same script
+  as the Java project's `recon/`), for choosing the segmentation config.
+- `report-viewer.html` — standalone, no-server viewer: open it and load a
+  `report.json` produced by `tfa analyze --out`.
+
+## Notes
+
+- Config YAML is identical to the Java project (`profile`, `segmentation`,
+  `clustering`, `baseline`, `detection`, `ranking`, plus optional `profiles:`).
+- The web UI is bound to `127.0.0.1` and has no authentication — run it only on a
+  machine you control. It shells out to `python -m tfa.cli` locally and reads only
+  the folder you name; nothing is uploaded.
