@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "toolVersion": "0.1.0",
+    "runTimestamp": "2026-08-21T22:19:09.082064992Z",
+    "configHash": "51bfd800ee714c8ce07cc00398b28627e806b170f8466463245db6154a9f8f27",
+    "corpusHash": "c18eaa56e90b4447db6730ccbecf63c2e5a9bee699dd2f7f4ec5a1262c41724e",
+    "corpusStart": "2026-08-20T10:00:00.127Z",
+    "corpusEnd": "2026-08-20T10:19:50.538Z",
+    "profile": "default",
+    "strategy": "ENTRY_MARKER",
+    "files": [
+      {
+        "name": "app-2.log",
+        "sizeBytes": 68886
+      },
+      {
+        "name": "error-1.log",
+        "sizeBytes": 1144
+      }
+    ]
+  },
+  "summary": {
+    "episodesEvaluated": 198,
+    "episodesCensored": 2,
+    "censorMarginMillis": 0,
+    "totalFindings": 2,
+    "suppressedCount": 0
+  },
+  "findings": [
+    {
+      "rank": 1,
+      "score": 2.858505,
+      "type": "TRUNCATION",
+      "occurrences": 5,
+      "clusterSignature": "com.acme.web.Dispatcher:10 > com.acme.svc.OrderService:20",
+      "clusterSize": 200,
+      "divergenceCallSite": "com.acme.repo.OrderRepository:30",
+      "divergenceIndex": 2,
+      "expectedCallSite": "com.acme.web.Dispatcher:99",
+      "expectedShare": 0.970000,
+      "observed": "ERRORED",
+      "exampleThread": "exec-1",
+      "exampleTimestamp": "2026-08-20T10:11:22.418Z",
+      "scoreBreakdown": {
+        "rarity": 0.975000,
+        "severity": 1,
+        "errorPresence": 1,
+        "magnitude": 0,
+        "clusterTrust": 0.767010,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-20T10:11:22.418Z | INFO | exec-1 | com.acme.web.Dispatcher:10 | begin req 111",
+        "     2026-08-20T10:11:22.439Z | INFO | exec-1 | com.acme.svc.OrderService:20 | processing",
+        "  >> 2026-08-20T10:11:22.448Z | ERROR | exec-1 | com.acme.repo.OrderRepository:30 | db timeout",
+        "       java.sql.SQLException: timeout",
+        "       \tat com.acme.repo.OrderRepository.load(OrderRepository.java:30)",
+        "       \tat com.acme.svc.OrderService.run(OrderService.java:20)"
+      ]
+    },
+    {
+      "rank": 2,
+      "score": 2.458505,
+      "type": "DIVERGENCE",
+      "occurrences": 5,
+      "clusterSignature": "com.acme.web.Dispatcher:10 > com.acme.svc.OrderService:20",
+      "clusterSize": 200,
+      "divergenceCallSite": "com.acme.repo.OrderRepository:30",
+      "divergenceIndex": 2,
+      "expectedCallSite": "org.springframework.web.Filter:88",
+      "expectedShare": 0.970000,
+      "observed": "com.acme.repo.OrderRepository:30",
+      "exampleThread": "exec-1",
+      "exampleTimestamp": "2026-08-20T10:11:22.418Z",
+      "scoreBreakdown": {
+        "rarity": 0.975000,
+        "severity": 0.600000,
+        "errorPresence": 1,
+        "magnitude": 0,
+        "clusterTrust": 0.767010,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-20T10:11:22.418Z | INFO | exec-1 | com.acme.web.Dispatcher:10 | begin req 111",
+        "     2026-08-20T10:11:22.439Z | INFO | exec-1 | com.acme.svc.OrderService:20 | processing",
+        "  >> 2026-08-20T10:11:22.448Z | ERROR | exec-1 | com.acme.repo.OrderRepository:30 | db timeout",
+        "       java.sql.SQLException: timeout",
+        "       \tat com.acme.repo.OrderRepository.load(OrderRepository.java:30)",
+        "       \tat com.acme.svc.OrderService.run(OrderService.java:20)"
+      ]
+    }
+  ]
+}

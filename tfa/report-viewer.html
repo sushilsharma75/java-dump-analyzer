@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TFA Report Viewer</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2024; --muted: #6b7280;
+    --line: #e5e7eb; --accent: #2563eb;
+    --trunc: #dc2626; --trunc-bg: #fef2f2;
+    --div: #d97706; --div-bg: #fffbeb;
+    --time: #2563eb; --time-bg: #eff6ff;
+    --code-bg: #0f172a; --code-ink: #e2e8f0; --code-hit: #fde68a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0e14; --panel: #151a22; --ink: #e6e9ef; --muted: #9aa4b2;
+      --line: #232a35; --accent: #60a5fa;
+      --trunc: #f87171; --trunc-bg: #2a1414;
+      --div: #fbbf24; --div-bg: #2a2110;
+      --time: #60a5fa; --time-bg: #14202e;
+      --code-bg: #05070c; --code-ink: #cbd5e1; --code-hit: #fde68a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 18px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  .loader { background: var(--panel); border: 1px dashed var(--line); border-radius: 12px;
+    padding: 28px; text-align: center; }
+  .loader.drag { border-color: var(--accent); background: var(--time-bg); }
+  .btn { display: inline-block; background: var(--accent); color: #fff; border: 0;
+    padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+  .meta { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px; font-size: 13px; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 18px; }
+  .meta div span { color: var(--muted); display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .chip { border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 13px; }
+  .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  input[type=search] { flex: 1; min-width: 160px; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-left-width: 4px;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .card.TRUNCATION { border-left-color: var(--trunc); }
+  .card.DIVERGENCE { border-left-color: var(--div); }
+  .card.TIMING { border-left-color: var(--time); }
+  .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .rank { font-size: 22px; font-weight: 700; }
+  .badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; letter-spacing: .03em; }
+  .badge.TRUNCATION { color: var(--trunc); background: var(--trunc-bg); }
+  .badge.DIVERGENCE { color: var(--div); background: var(--div-bg); }
+  .badge.TIMING { color: var(--time); background: var(--time-bg); }
+  .score { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .occ { font-size: 12px; color: var(--muted); }
+  .plain { font-size: 15px; margin: 10px 0 6px; }
+  .kv { font-size: 13px; color: var(--muted); margin: 2px 0; }
+  .kv b { color: var(--ink); font-weight: 600; }
+  .toggle { color: var(--accent); cursor: pointer; font-size: 12px; user-select: none; margin-right: 14px; }
+  pre.log { background: var(--code-bg); color: var(--code-ink); border-radius: 8px; padding: 12px;
+    overflow-x: auto; font-size: 12px; line-height: 1.45; margin: 10px 0 4px; }
+  pre.log .hit { background: rgba(253,230,138,.14); color: var(--code-hit); display: block; }
+  .brk { font-size: 12px; margin: 8px 0 2px; }
+  table.sb { font-size: 12px; border-collapse: collapse; margin: 6px 0; }
+  table.sb td { padding: 2px 10px 2px 0; color: var(--muted); }
+  table.sb td b { color: var(--ink); }
+  .empty { text-align: center; color: var(--muted); padding: 40px; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TFA Report Viewer</h1>
+  <p class="sub">Load a <span class="mono">report.json</span> produced by <span class="mono">tfa analyze --out</span>. Everything runs in your browser; the file never leaves your machine.</p>
+
+  <div id="loader" class="loader">
+    <button class="btn" id="pick">Load report.json</button>
+    <input type="file" id="file" accept=".json,application/json" class="hide">
+    <div class="hint">…or drag the file anywhere onto this box.</div>
+  </div>
+
+  <div id="report" class="hide">
+    <div class="meta" id="meta"></div>
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search call site, thread, cluster…">
+      <span class="chip on" data-f="ALL">All</span>
+      <span class="chip" data-f="TRUNCATION">Truncation</span>
+      <span class="chip" data-f="DIVERGENCE">Divergence</span>
+      <span class="chip" data-f="TIMING">Timing</span>
+      <span class="occ" id="count"></span>
+    </div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (s, r=document) => r.querySelector(s);
+let DATA = null, FILTER = "ALL", QUERY = "";
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+}
+function pct(x) { return (x == null ? 0 : Math.round(x * 100)) + "%"; }
+
+function plainEnglish(f) {
+  const where = `<span class="mono">${esc(f.divergenceCallSite)}</span>`;
+  if (f.type === "TRUNCATION") {
+    return `The flow broke at ${where}. ${pct(f.expectedShare)} of this flow's runs `
+      + `reach <span class="mono">${esc(f.expectedCallSite)}</span> and finish — these `
+      + `<b>${f.occurrences}</b> stopped early (<span class="mono">${esc(f.observed)}</span>).`;
+  }
+  if (f.type === "DIVERGENCE") {
+    return `Wrong turn at ${where}. ${pct(f.expectedShare)} went to `
+      + `<span class="mono">${esc(f.expectedCallSite)}</span> here; these `
+      + `<b>${f.occurrences}</b> went to <span class="mono">${esc(f.observed)}</span> instead.`;
+  }
+  return `Too slow into ${where}. The step `
+    + `<span class="mono">${esc(f.expectedCallSite)}</span> → <span class="mono">${esc(f.divergenceCallSite)}</span> `
+    + `ran far over its normal p95 (${esc(f.observed)}) in <b>${f.occurrences}</b> run(s).`;
+}
+
+function logHtml(lines) {
+  return (lines || []).map(l => {
+    const hit = l.includes(">>");
+    return `<span class="${hit ? "hit" : ""}">${esc(l)}</span>`;
+  }).join("\n");
+}
+
+function breakdownHtml(b) {
+  if (!b) return "";
+  const row = (k, v) => `<tr><td>${k}</td><td><b>${(v ?? 0).toFixed ? v.toFixed(2) : v}</b></td></tr>`;
+  return `<table class="sb">${row("rarity", b.rarity)}${row("severity", b.severity)}`
+    + `${row("error", b.errorPresence)}${row("timing magnitude", b.magnitude)}`
+    + `${row("cluster trust", b.clusterTrust)}${row("variant penalty", b.variantPenalty)}</table>`;
+}
+
+function cardHtml(f, i) {
+  const id = "c" + i;
+  return `<div class="card ${esc(f.type)}">
+    <div class="head">
+      <span class="rank">#${f.rank}</span>
+      <span class="badge ${esc(f.type)}">${esc(f.type)}</span>
+      <span class="occ">×${f.occurrences} occurrence(s)</span>
+      <span class="score">score ${(f.score ?? 0).toFixed(2)}</span>
+    </div>
+    <p class="plain">${plainEnglish(f)}</p>
+    <div class="kv">Flow (cluster): <b class="mono">${esc(f.clusterSignature)}</b> · size ${f.clusterSize}</div>
+    <div class="kv">Go look at: <b class="mono">${esc(f.exampleThread)}</b> @ <b class="mono">${esc(f.exampleTimestamp)}</b></div>
+    <div style="margin-top:8px">
+      <span class="toggle" data-t="log-${id}">▸ Log context</span>
+      <span class="toggle" data-t="sb-${id}">▸ Why this score</span>
+    </div>
+    <div id="log-${id}" class="hide"><pre class="log">${logHtml(f.logContext)}</pre></div>
+    <div id="sb-${id}" class="hide"><div class="brk">${breakdownHtml(f.scoreBreakdown)}</div></div>
+  </div>`;
+}
+
+function renderMeta() {
+  const m = DATA.meta || {}, s = DATA.summary || {};
+  const cell = (label, val) => `<div><span>${label}</span>${esc(val)}</div>`;
+  $("#meta").innerHTML =
+    cell("profile / strategy", `${m.profile || "?"} / ${m.strategy || "?"}`)
+    + cell("corpus range", `${(m.corpusStart||"").slice(0,19)} → ${(m.corpusEnd||"").slice(0,19)}`)
+    + cell("episodes", `${s.episodesEvaluated ?? "?"} evaluated, ${s.episodesCensored ?? 0} censored`)
+    + cell("findings", `${s.totalFindings ?? 0} total, ${s.suppressedCount ?? 0} suppressed`)
+    + cell("tool version", m.toolVersion || "?")
+    + cell("config hash", (m.configHash || "").slice(0, 12) + "…");
+}
+
+function render() {
+  const all = DATA.findings || [];
+  const q = QUERY.toLowerCase();
+  const shown = all.filter(f => {
+    if (FILTER !== "ALL" && f.type !== FILTER) return false;
+    if (!q) return true;
+    return JSON.stringify([f.divergenceCallSite, f.expectedCallSite, f.observed,
+      f.clusterSignature, f.exampleThread]).toLowerCase().includes(q);
+  });
+  $("#count").textContent = `${shown.length} of ${all.length} shown`;
+  $("#list").innerHTML = shown.length
+    ? shown.map(cardHtml).join("")
+    : `<div class="empty">No findings match. ${all.length === 0 ? "This was a clean run — nothing flagged." : ""}</div>`;
+}
+
+function load(obj) {
+  DATA = obj;
+  $("#loader").classList.add("hide");
+  $("#report").classList.remove("hide");
+  renderMeta();
+  render();
+}
+
+function readFile(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try { load(JSON.parse(r.result)); }
+    catch (e) { alert("Could not parse JSON: " + e.message); }
+  };
+  r.readAsText(file);
+}
+
+// wiring
+$("#pick").onclick = () => $("#file").click();
+$("#file").onchange = e => { if (e.target.files[0]) readFile(e.target.files[0]); };
+const lo = $("#loader");
+["dragenter","dragover"].forEach(ev => lo.addEventListener(ev, e => { e.preventDefault(); lo.classList.add("drag"); }));
+["dragleave","drop"].forEach(ev => lo.addEventListener(ev, e => { e.preventDefault(); lo.classList.remove("drag"); }));
+lo.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+window.addEventListener("drop", e => e.preventDefault());
+window.addEventListener("dragover", e => e.preventDefault());
+
+document.addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (chip) {
+    FILTER = chip.dataset.f;
+    document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c === chip));
+    render(); return;
+  }
+  const tog = e.target.closest(".toggle");
+  if (tog) {
+    const box = document.getElementById(tog.dataset.t);
+    const open = box.classList.toggle("hide");
+    tog.textContent = tog.textContent.replace(/^[▸▾]/, open ? "▸" : "▾");
+  }
+});
+$("#q").addEventListener("input", e => { QUERY = e.target.value; render(); });
+</script>
+</body>
+</html>
