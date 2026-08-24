@@ -129,48 +129,66 @@ $("#run").onclick = async () => {
   if (!steps.length) { alert("Pick at least one step."); return; }
 
   const btn = $("#run"); btn.disabled = true; btn.textContent = "Running…";
-  $("#results").innerHTML = `<div class="panel"><span class="spin"></span> Running ${steps.length} step(s)… (large corpora can take a while)</div>`;
+  $("#results").innerHTML = "<h2>Steps</h2>";
   $("#report").innerHTML = "";
 
   try {
-    const body = new URLSearchParams({ dir, config: $("#config").value, steps: steps.join(",") });
-    const res = await fetch("/api/run", { method:"POST", body });
-    const data = await res.json();
-    if (data.error) { $("#results").innerHTML = `<div class="panel err">Error: ${esc(data.error)}</div>`; return; }
-    renderSteps(data);
-    if (data.report) await renderReport(data.runId);
+    // create the run (writes config), then step through one at a time
+    const startBody = new URLSearchParams({ dir, config: $("#config").value });
+    const start = await fetch("/api/start", { method:"POST", body:startBody }).then(r=>r.json());
+    if (start.error) { $("#results").innerHTML = `<div class="panel err">Error: ${esc(start.error)}</div>`; return; }
+    const runId = start.runId;
+
+    let reportReady = false;
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const card = pendingCard(step, i, steps.length);
+      $("#results").appendChild(card);
+      try {
+        const s = await fetch(`/api/step?run=${runId}&name=${encodeURIComponent(step)}`, { method:"POST" }).then(r=>r.json());
+        fillCard(card, runId, s);
+        if (s.reportReady) reportReady = true;
+      } catch (e) {
+        card.className = "stepcard bad";
+        card.querySelector(".stephead").innerHTML = `<b class="mono">tfa ${esc(step)}</b> <span class="stat bad">request failed: ${esc(e.message)}</span>`;
+        break;
+      }
+    }
+    if (reportReady) await renderReport(runId);
   } catch (e) {
-    $("#results").innerHTML = `<div class="panel err">Request failed: ${esc(e.message)}</div>`;
+    $("#results").innerHTML += `<div class="panel err">Request failed: ${esc(e.message)}</div>`;
   } finally {
     btn.disabled = false; btn.textContent = "Run pipeline";
   }
 };
 
-function renderSteps(data) {
-  const wrap = document.createElement("div");
-  wrap.innerHTML = "<h2>Steps</h2>";
-  data.steps.forEach((s,i) => {
-    const cls = s.ok ? "ok" : "bad";
-    const kb = (s.bytes/1024).toFixed(1);
-    const card = document.createElement("div");
-    card.className = "stepcard " + cls;
-    card.innerHTML = `
-      <div class="stephead">
-        <b class="mono">tfa ${esc(s.name)}</b>
-        <span class="stat ${cls}">${s.ok ? "exit 0" : "exit "+s.exitCode}</span>
-        <a class="dl" href="/api/artifact?run=${data.runId}&name=${encodeURIComponent(s.file)}">download ${esc(s.file)} (${kb} KB)</a>
-      </div>
-      <span class="toggle" data-i="${i}">▸ output</span>
-      <div class="out hide"><pre>${logHtml(s.tail)}</pre></div>`;
-    card.querySelector(".toggle").onclick = e => {
-      const box = card.querySelector(".out");
-      const open = box.classList.toggle("hide");
-      e.target.textContent = e.target.textContent.replace(/^[▸▾]/, open ? "▸" : "▾");
-    };
-    wrap.appendChild(card);
-  });
-  $("#results").innerHTML = "";
-  $("#results").appendChild(wrap);
+function pendingCard(step, i, total) {
+  const card = document.createElement("div");
+  card.className = "stepcard";
+  card.innerHTML = `<div class="stephead">
+      <b class="mono">tfa ${esc(step)}</b>
+      <span class="stat"><span class="spin"></span> running… (${i+1}/${total})</span>
+    </div>`;
+  return card;
+}
+
+function fillCard(card, runId, s) {
+  const cls = s.ok ? "ok" : "bad";
+  const kb = (s.bytes/1024).toFixed(1);
+  card.className = "stepcard " + cls;
+  card.innerHTML = `
+    <div class="stephead">
+      <b class="mono">tfa ${esc(s.name)}</b>
+      <span class="stat ${cls}">${s.ok ? "exit 0" : "exit "+s.exitCode}</span>
+      <a class="dl" href="/api/artifact?run=${runId}&name=${encodeURIComponent(s.file)}">download ${esc(s.file)} (${kb} KB)</a>
+    </div>
+    <span class="toggle">▸ output</span>
+    <div class="out hide"><pre>${logHtml(s.tail)}</pre></div>`;
+  card.querySelector(".toggle").onclick = e => {
+    const box = card.querySelector(".out");
+    const open = box.classList.toggle("hide");
+    e.target.textContent = e.target.textContent.replace(/^[▸▾]/, open ? "▸" : "▾");
+  };
 }
 
 function logHtml(text){

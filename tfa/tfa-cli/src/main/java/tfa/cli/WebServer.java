@@ -37,7 +37,10 @@ public final class WebServer {
     private final int port;
     private final Path jar;
     private final Path baseDir;
-    private final Map<String, Path> runs = new ConcurrentHashMap<>();
+    private final Map<String, Run> runs = new ConcurrentHashMap<>();
+
+    /** One analysis run: its working dir, the log folder, and the written config/suppressions. */
+    private record Run(Path runDir, String dir, Path cfg, Path supp) {}
 
     private WebServer(int port, Path jar) throws IOException {
         this.port = port;
@@ -59,7 +62,8 @@ public final class WebServer {
     private void run() throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         http.createContext("/", this::handleRoot);
-        http.createContext("/api/run", this::handleRun);
+        http.createContext("/api/start", this::handleStart);
+        http.createContext("/api/step", this::handleStep);
         http.createContext("/api/artifact", this::handleArtifact);
         http.createContext("/api/report", this::handleReport);
         http.setExecutor(Executors.newFixedThreadPool(4));
@@ -85,9 +89,9 @@ public final class WebServer {
         }
     }
 
-    // -- POST /api/run : run steps against a folder -------------------------
+    // -- POST /api/start : create a run (write config), return its id --------
 
-    private void handleRun(HttpExchange ex) throws IOException {
+    private void handleStart(HttpExchange ex) throws IOException {
         if (!"POST".equals(ex.getRequestMethod())) {
             send(ex, 405, "text/plain", "POST only".getBytes(StandardCharsets.UTF_8));
             return;
@@ -96,12 +100,6 @@ public final class WebServer {
         String dir = form.getOrDefault("dir", "").trim();
         String config = form.getOrDefault("config", "");
         String suppressions = form.getOrDefault("suppressions", "").trim();
-        List<String> steps = new ArrayList<>();
-        for (String s : form.getOrDefault("steps", "").split(",")) {
-            if (!s.isBlank()) {
-                steps.add(s.trim());
-            }
-        }
 
         if (dir.isEmpty() || !Files.isDirectory(Path.of(dir))) {
             send(ex, 400, "application/json",
@@ -112,8 +110,6 @@ public final class WebServer {
         String runId = UUID.randomUUID().toString();
         Path runDir = baseDir.resolve(runId);
         Files.createDirectories(runDir);
-        runs.put(runId, runDir);
-
         Path cfgFile = runDir.resolve("config.yaml");
         Files.writeString(cfgFile, config);
         Path suppFile = null;
@@ -121,29 +117,37 @@ public final class WebServer {
             suppFile = runDir.resolve("suppressions.yaml");
             Files.writeString(suppFile, suppressions);
         }
+        runs.put(runId, new Run(runDir, dir, cfgFile, suppFile));
+        send(ex, 200, "application/json",
+                Json.write(Map.of("runId", runId)).getBytes(StandardCharsets.UTF_8));
+    }
 
-        List<Object> stepResults = new ArrayList<>();
-        boolean hasReport = false;
-        for (String step : steps) {
-            StepRun sr = runStep(step, dir, cfgFile, suppFile, runDir);
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("name", step);
-            m.put("exitCode", sr.exitCode);
-            m.put("ok", sr.exitCode == 0);
-            m.put("file", sr.outFile);
-            m.put("bytes", sr.bytes);
-            m.put("tail", sr.tail);
-            stepResults.add(m);
-            if ("analyze".equals(step) && Files.exists(runDir.resolve("report.json"))) {
-                hasReport = true;
-            }
+    // -- POST /api/step?run=..&name=.. : run one step, return its result -----
+
+    private void handleStep(HttpExchange ex) throws IOException {
+        if (!"POST".equals(ex.getRequestMethod())) {
+            send(ex, 405, "text/plain", "POST only".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        Map<String, String> q = parseForm(ex.getRequestURI().getRawQuery());
+        Run run = runs.get(q.get("run"));
+        String step = q.get("name");
+        if (run == null || step == null || !step.matches("[a-z-]+")) {
+            send(ex, 400, "application/json",
+                    Json.write(Map.of("error", "unknown run or step")).getBytes(StandardCharsets.UTF_8));
+            return;
         }
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("runId", runId);
-        resp.put("steps", stepResults);
-        resp.put("report", hasReport);
-        send(ex, 200, "application/json", Json.write(resp).getBytes(StandardCharsets.UTF_8));
+        StepRun sr = runStep(step, run.dir(), run.cfg(), run.supp(), run.runDir());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", step);
+        m.put("exitCode", sr.exitCode);
+        m.put("ok", sr.exitCode == 0);
+        m.put("file", sr.outFile);
+        m.put("bytes", sr.bytes);
+        m.put("tail", sr.tail);
+        m.put("reportReady", Files.exists(run.runDir().resolve("report.json")));
+        send(ex, 200, "application/json", Json.write(m).getBytes(StandardCharsets.UTF_8));
     }
 
     private record StepRun(int exitCode, String outFile, long bytes, String tail) {}
@@ -243,10 +247,11 @@ public final class WebServer {
         if (runId == null || name == null || !name.matches("[\\w.-]+")) {
             return null;
         }
-        Path runDir = runs.get(runId);
-        if (runDir == null) {
+        Run run = runs.get(runId);
+        if (run == null) {
             return null;
         }
+        Path runDir = run.runDir();
         Path file = runDir.resolve(name).normalize();
         if (!file.startsWith(runDir) || !Files.exists(file)) {
             return null;
