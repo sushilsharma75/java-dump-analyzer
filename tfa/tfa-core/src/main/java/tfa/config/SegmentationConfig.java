@@ -18,7 +18,8 @@ public record SegmentationConfig(
         StrategyKind strategy,
         Set<String> entryCallSites,
         Set<String> terminalCallSites,
-        long idleGapMillis
+        long idleGapMillis,
+        String correlationIdPattern
 ) {
     public SegmentationConfig {
         entryCallSites = entryCallSites == null ? Set.of() : Set.copyOf(entryCallSites);
@@ -42,7 +43,7 @@ public record SegmentationConfig(
                 }
                 yield new IdleGapStrategy(idleGapMillis, terminalCallSites);
             }
-            case CORRELATION_ID -> new CorrelationIdStrategy();
+            case CORRELATION_ID -> new CorrelationIdStrategy(correlationIdPattern, terminalCallSites);
         };
     }
 }

@@ -96,3 +96,20 @@ python -m pytest
 - The web UI is bound to `127.0.0.1` and has no authentication — run it only on a
   machine you control. It shells out to `python -m tfa.cli` locally and reads only
   the folder you name; nothing is uploaded.
+
+## Cross-service flows (correlation id)
+
+If one logical flow spans several services/threads joined by a trace id — the
+common microservice case — segment by `CORRELATION_ID` instead of by thread:
+
+```yaml
+segmentation:
+  strategy: CORRELATION_ID
+  correlationIdPattern: 'trace_id=([0-9a-f]+)'   # regex, id in group 1
+  terminalCallSites: [OrderController:38]        # how a flow is known to have completed
+```
+
+Every record sharing an id becomes one episode, in true time order, across all
+service log files. Records with no id are dropped. `tools/make_microservice_demo.py`
+generates an order/inventory/payment corpus with a payment-service-down defect and
+proves detection end to end.

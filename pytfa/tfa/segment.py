@@ -2,6 +2,7 @@
 driver. Port of the Java `tfa.segment` package."""
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import Callable, Iterable, Iterator, Optional
 
@@ -34,6 +35,12 @@ class FlowKeyStrategy(ABC):
     @abstractmethod
     def new_thread_segmenter(self, thread_id: str) -> ThreadSegmenter:
         ...
+
+    def grouping_key(self, record: LogRecord) -> Optional[str]:
+        """Which key this record belongs to. Thread id by default; a correlation
+        strategy overrides this so one flow can span threads and services.
+        Returning None drops the record (it belongs to no flow)."""
+        return record.thread_id
 
     def segment(self, thread_id: str, ordered_records: Iterable[LogRecord]) -> list[Episode]:
         seg = self.new_thread_segmenter(thread_id)
@@ -172,17 +179,68 @@ class IdleGapStrategy(FlowKeyStrategy):
 
 # ----------------------------------------------------------- CorrelationId (C)
 
+class _CorrelationSegmenter(ThreadSegmenter):
+    """Accumulates every record carrying one correlation id, across threads and
+    services, and emits a single time-ordered Episode at end of stream."""
+
+    def __init__(self, correlation_id, terminals):
+        self.correlation_id = correlation_id
+        self.terminals = terminals
+        self.records: list[LogRecord] = []
+
+    def accept(self, record):
+        self.records.append(record)
+        return []          # a correlated flow has no mid-stream boundary
+
+    def finish(self):
+        if not self.records:
+            return None
+        # records arrive per-file, so sort the flow into true time order
+        self.records.sort(key=lambda r: (r.timestamp is None, r.timestamp))
+        e = Episode(self.correlation_id)
+        for r in self.records:
+            e.add(r)
+        reached = any(r.call_site() in self.terminals for r in self.records)
+        base = TerminalStatus.COMPLETED if reached else TerminalStatus.TRUNCATED
+        e.set_status(TerminalStatus.ERRORED if e.has_error_record() else base)
+        return e
+
+
 class CorrelationIdStrategy(FlowKeyStrategy):
-    """V1 stub. Logs do not carry a correlation id yet. Exists to prove the
-    interface accommodates a future cross-thread key without a redesign."""
+    """Segments by a correlation id carried in the log (Impl C).
+
+    One flow = every record sharing a correlation id, regardless of which thread
+    or which service emitted it. This is what makes a cross-service flow
+    (order -> inventory -> payment) a single episode.
+
+    ``pattern`` is a regex applied to each record's message with the id in group
+    1, e.g. ``trace_id=([0-9a-f]+)``. Records with no match are dropped.
+
+    Memory note: one open flow is held per in-flight correlation id until the
+    stream ends, so this is bounded by concurrent flows rather than being fully
+    streaming. Fine for batch analysis; revisit for very large corpora.
+    """
+
+    def __init__(self, pattern: str, terminal_call_sites=()):
+        if not pattern:
+            raise ValueError(
+                "CORRELATION_ID strategy requires segmentation.correlationIdPattern, "
+                "e.g. 'trace_id=([0-9a-f]+)'")
+        self.pattern = re.compile(pattern)
+        self.terminals = frozenset(terminal_call_sites)
 
     @property
     def name(self):
         return "CORRELATION_ID"
 
-    def new_thread_segmenter(self, thread_id):
-        raise NotImplementedError(
-            "CorrelationIdStrategy is a V1 stub - logs do not carry a correlation id yet.")
+    def grouping_key(self, record: LogRecord) -> Optional[str]:
+        m = self.pattern.search(record.message or "")
+        if not m:
+            return None
+        return m.group(1) if m.groups() else m.group(0)
+
+    def new_thread_segmenter(self, correlation_id: str) -> ThreadSegmenter:
+        return _CorrelationSegmenter(correlation_id, self.terminals)
 
 
 # ------------------------------------------------------------ streaming driver
@@ -197,10 +255,13 @@ class StreamingSegmenter:
     def segment(self, records: Iterator[LogRecord], sink: Callable[[Episode], None]) -> None:
         open_segs: dict[str, ThreadSegmenter] = {}
         for r in records:
-            seg = open_segs.get(r.thread_id)
+            key = self.strategy.grouping_key(r)
+            if key is None:
+                continue           # record belongs to no flow (e.g. no correlation id)
+            seg = open_segs.get(key)
             if seg is None:
-                seg = self.strategy.new_thread_segmenter(r.thread_id)
-                open_segs[r.thread_id] = seg
+                seg = self.strategy.new_thread_segmenter(key)
+                open_segs[key] = seg
             for e in seg.accept(r):
                 sink(e)
         for seg in open_segs.values():

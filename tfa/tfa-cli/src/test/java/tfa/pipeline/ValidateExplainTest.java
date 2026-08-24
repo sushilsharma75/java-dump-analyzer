@@ -42,7 +42,7 @@ class ValidateExplainTest {
         return new AnalysisConfig(
                 FormatProfile.defaultProfile(), 0.95, 1000,
                 new SegmentationConfig(StrategyKind.ENTRY_MARKER,
-                        Set.of("com.acme.Entry:1"), Set.of("com.acme.Entry:99"), 5000),
+                        Set.of("com.acme.Entry:1"), Set.of("com.acme.Entry:99"), 5000, ""),
                 new ClusteringConfig(3, 10, 200),
                 BaselineConfig.defaults(),
                 new DetectionConfig(3.0, censorMargin),

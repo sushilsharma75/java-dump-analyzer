@@ -29,6 +29,15 @@ public interface FlowKeyStrategy {
     ThreadSegmenter newThreadSegmenter(String threadId);
 
     /**
+     * Which key this record belongs to. Thread id by default; a correlation
+     * strategy overrides this so one flow can span threads and services.
+     * Returning {@code null} drops the record (it belongs to no flow).
+     */
+    default String groupingKey(LogRecord record) {
+        return record.threadId();
+    }
+
+    /**
      * Segment a thread's fully-materialised, time-ordered records into episodes.
      * Convenience over the incremental path; prefer {@link StreamingSegmenter}
      * for large corpora.

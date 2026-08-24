@@ -2,6 +2,7 @@ package tfa.segment;
 
 import org.junit.jupiter.api.Test;
 import tfa.model.Episode;
+import tfa.model.TerminalStatus;
 import tfa.model.LogRecord;
 
 import java.util.ArrayList;
@@ -61,11 +62,55 @@ class StreamingSegmenterTest {
     }
 
     @Test
-    void correlationIdStrategyIsAStubProvingTheInterfaceFits() {
-        CorrelationIdStrategy s = new CorrelationIdStrategy();
-        assertEquals("CORRELATION_ID", s.name());
-        // it implements FlowKeyStrategy (compiles), but is not implemented in V1
-        assertThrows(UnsupportedOperationException.class, () -> s.newThreadSegmenter("t"));
-        assertTrue(s instanceof FlowKeyStrategy);
+    void correlationIdGroupsOneFlowAcrossThreadsAndServices() {
+        // A flow spanning several threads/services is ONE episode when joined by id.
+        CorrelationIdStrategy strategy =
+                new CorrelationIdStrategy("trace_id=([0-9a-f]+)", Set.of("Order:38"));
+        assertEquals("CORRELATION_ID", strategy.name());
+        assertTrue(strategy instanceof FlowKeyStrategy);
+
+        List<LogRecord> stream = List.of(
+                traced(0, "order-1", "Order:28", "aaa"),
+                traced(1, "order-9", "Order:28", "bbb"),
+                traced(2, "inv-7", "Inventory:31", "aaa"),
+                traced(3, "pay-2", "Payment:29", "aaa"),
+                traced(4, "order-1", "Order:38", "aaa"),
+                traced(5, "order-9", "Order:38", "bbb"));
+
+        List<Episode> eps = new StreamingSegmenter(strategy).segmentToList(stream.stream());
+        assertEquals(2, eps.size(), "one episode per correlation id, not per thread");
+        Episode aaa = eps.stream().filter(e -> e.threadId().equals("aaa")).findFirst().orElseThrow();
+        assertEquals(List.of("Order:28", "Inventory:31", "Payment:29", "Order:38"),
+                aaa.callSiteSequence());
+        assertEquals(TerminalStatus.COMPLETED, aaa.status());
+    }
+
+    @Test
+    void correlationIdSortsRecordsIntoTimeOrderAndDropsUnmatchedRecords() {
+        CorrelationIdStrategy strategy = new CorrelationIdStrategy("trace_id=(\\w+)", Set.of());
+        // out of order (as if read from separate service files), plus one with no id
+        List<LogRecord> stream = List.of(
+                traced(300, "t", "C:3", "x"),
+                traced(100, "t", "A:1", "x"),
+                untraced(150, "t", "Z:9"),
+                traced(200, "t", "B:2", "x"));
+        List<Episode> eps = new StreamingSegmenter(strategy).segmentToList(stream.stream());
+        assertEquals(1, eps.size());
+        assertEquals(List.of("A:1", "B:2", "C:3"), eps.get(0).callSiteSequence());
+    }
+
+    private static LogRecord traced(long ms, String thread, String cs, String trace) {
+        return withMessage(ms, thread, cs, "work [trace_id=" + trace + "]");
+    }
+
+    private static LogRecord untraced(long ms, String thread, String cs) {
+        return withMessage(ms, thread, cs, "no id here");
+    }
+
+    private static LogRecord withMessage(long ms, String thread, String cs, String msg) {
+        int colon = cs.lastIndexOf(':');
+        return new LogRecord(java.time.Instant.ofEpochMilli(ms), "INFO", thread,
+                cs.substring(0, colon), Integer.parseInt(cs.substring(colon + 1)),
+                msg, List.of(), "f", 1);
     }
 }

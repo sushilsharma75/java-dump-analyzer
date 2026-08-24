@@ -45,15 +45,51 @@ def test_idle_gap():
     assert eps[1].call_site_sequence() == ["C:3", "D:4"] and eps[1].status is TerminalStatus.TRUNCATED
 
 
-def test_correlation_stub():
-    s = CorrelationIdStrategy()
+def test_correlation_id_groups_one_flow_across_threads_and_services():
+    """A flow spanning several threads/services is ONE episode when joined by id."""
+    s = CorrelationIdStrategy(r"trace_id=([0-9a-f]+)", {"Order:38"})
     assert s.name == "CORRELATION_ID"
     assert isinstance(s, FlowKeyStrategy)
-    try:
-        s.new_thread_segmenter("t")
-        assert False
-    except NotImplementedError:
-        pass
+
+    def r(ms, thread, cs, trace):
+        cls, _, ln = cs.rpartition(":")
+        return LogRecord(datetime.fromtimestamp(ms / 1000, tz=timezone.utc), "INFO", thread,
+                         cls, int(ln), f"work [trace_id={trace}]", (), "f", 1)
+
+    # trace aaa spans 3 threads (order -> inventory -> payment), interleaved with bbb
+    stream = [r(0, "order-1", "Order:28", "aaa"), r(1, "order-9", "Order:28", "bbb"),
+              r(2, "inv-7", "Inventory:31", "aaa"), r(3, "pay-2", "Payment:29", "aaa"),
+              r(4, "order-1", "Order:38", "aaa"), r(5, "order-9", "Order:38", "bbb")]
+    eps = StreamingSegmenter(s).segment_to_list(iter(stream))
+
+    assert len(eps) == 2, "one episode per correlation id, not per thread"
+    aaa = next(e for e in eps if e.thread_id == "aaa")
+    assert aaa.call_site_sequence() == ["Order:28", "Inventory:31", "Payment:29", "Order:38"]
+    assert aaa.status is TerminalStatus.COMPLETED
+
+
+def test_correlation_id_sorts_records_into_time_order():
+    """Records arrive per-file, so a flow's records must be re-sorted by time."""
+    s = CorrelationIdStrategy(r"trace_id=(\w+)")
+
+    def r(ms, cs):
+        cls, _, ln = cs.rpartition(":")
+        return LogRecord(datetime.fromtimestamp(ms / 1000, tz=timezone.utc), "INFO", "t",
+                         cls, int(ln), "m [trace_id=x]", (), "f", 1)
+
+    # deliberately out of order (as if read from separate service files)
+    eps = StreamingSegmenter(s).segment_to_list(iter([r(300, "C:3"), r(100, "A:1"), r(200, "B:2")]))
+    assert eps[0].call_site_sequence() == ["A:1", "B:2", "C:3"]
+
+
+def test_records_without_correlation_id_are_dropped():
+    s = CorrelationIdStrategy(r"trace_id=(\w+)")
+    good = LogRecord(datetime.fromtimestamp(0, tz=timezone.utc), "INFO", "t", "A", 1,
+                     "m [trace_id=x]", (), "f", 1)
+    bad = LogRecord(datetime.fromtimestamp(1, tz=timezone.utc), "INFO", "t", "B", 2,
+                    "no id here", (), "f", 1)
+    eps = StreamingSegmenter(s).segment_to_list(iter([good, bad]))
+    assert len(eps) == 1 and eps[0].call_site_sequence() == ["A:1"]
 
 
 def test_streaming_interleaved_threads():

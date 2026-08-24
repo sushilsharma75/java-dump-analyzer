@@ -33,6 +33,7 @@ class SegmentationConfig:
     entry_call_sites: frozenset[str]
     terminal_call_sites: frozenset[str]
     idle_gap_millis: int
+    correlation_id_pattern: str = ""
 
     def build_strategy(self):
         from .segment import EntryMarkerStrategy, IdleGapStrategy, CorrelationIdStrategy
@@ -44,7 +45,7 @@ class SegmentationConfig:
             if self.idle_gap_millis <= 0:
                 raise ValueError("IDLE_GAP strategy requires idleGapMillis > 0")
             return IdleGapStrategy(self.idle_gap_millis, self.terminal_call_sites)
-        return CorrelationIdStrategy()
+        return CorrelationIdStrategy(self.correlation_id_pattern, self.terminal_call_sites)
 
 
 @dataclass(frozen=True)
@@ -126,7 +127,8 @@ class AnalysisConfig:
             StrategyKind(str(seg.get("strategy", "ENTRY_MARKER")).strip()),
             frozenset(str(x).strip() for x in (seg.get("entryCallSites") or [])),
             frozenset(str(x).strip() for x in (seg.get("terminalCallSites") or [])),
-            int(seg.get("idleGapMillis", 5000)))
+            int(seg.get("idleGapMillis", 5000)),
+            str(seg.get("correlationIdPattern", "") or ""))
 
         c = doc.get("clustering") or {}
         clustering = ClusteringConfig(int(c.get("signatureK", 3)),
