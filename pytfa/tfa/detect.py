@@ -131,6 +131,14 @@ class Censor:
         self.margin_millis = max(0, margin_millis)
 
     def is_censored(self, episode: Episode) -> bool:
+        # A COMPLETED episode reached its modal terminal, so it is whole -- it was
+        # not cut off by the dump boundary, even if it sits near the edge. Only
+        # potentially-cut-off episodes (not COMPLETED) are censoring candidates.
+        # This stops a slow-but-complete flow near the boundary from being hidden,
+        # and stops a single slow outlier's inflated p99-duration margin from
+        # censoring legitimate flows (see charter section 3.5).
+        if episode.status is TerminalStatus.COMPLETED:
+            return False
         start, end = episode.start, episode.end
         if self.corpus_start is not None and start is not None:
             if epoch_millis(start) <= epoch_millis(self.corpus_start) + self.margin_millis:

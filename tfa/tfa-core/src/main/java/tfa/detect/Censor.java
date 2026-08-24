@@ -1,6 +1,7 @@
 package tfa.detect;
 
 import tfa.model.Episode;
+import tfa.model.TerminalStatus;
 
 import java.time.Instant;
 
@@ -28,6 +29,15 @@ public final class Censor {
     public long marginMillis() { return marginMillis; }
 
     public boolean isCensored(Episode episode) {
+        // A COMPLETED episode reached its modal terminal, so it is whole — it was
+        // not cut off by the dump boundary, even if it sits near the edge. Only
+        // potentially-cut-off episodes (not COMPLETED) are censoring candidates.
+        // This stops a slow-but-complete flow near the boundary from being hidden,
+        // and stops a single slow outlier's inflated p99-duration margin from
+        // censoring legitimate flows (§3.5).
+        if (episode.status() == TerminalStatus.COMPLETED) {
+            return false;
+        }
         Instant start = episode.start();
         Instant end = episode.end();
         if (corpusStart != null && start != null

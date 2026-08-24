@@ -155,6 +155,22 @@ def test_engine_finds_each_defect_zero_fp():
         assert f.episode.thread_id in ("trunc", "wrong", "slow")
 
 
+def test_completed_slow_episode_at_boundary_is_flagged_not_censored():
+    # Regression: a slow-but-COMPLETE flow at the corpus edge must not be hidden
+    # by the p99-duration censor margin (which the outlier itself inflates).
+    c = FlowCluster("sig")
+    for i in range(30):
+        c.add(testkit.clean(f"clean-{i}", T0 + timedelta(seconds=25 * i)))
+    # the slow episode is the LAST one (at the boundary) and it completes
+    slow = testkit.slow_transition("slow", T0 + timedelta(seconds=25 * 30))
+    c.add(slow)
+    result = DetectionEngine(DetectionConfig(3.0, None), BaselineConfig()).detect([c])
+    timing = [f for f in result.all_findings() if f.type is FindingType.TIMING]
+    assert timing, "the slow completed flow at the boundary should be flagged"
+    assert all(f.episode.thread_id == "slow" for f in timing)
+    assert result.episodes_censored == 0
+
+
 def test_boundary_censoring():
     c = FlowCluster("sig")
     for i in range(50):

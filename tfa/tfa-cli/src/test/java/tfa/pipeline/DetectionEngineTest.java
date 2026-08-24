@@ -59,6 +59,24 @@ class DetectionEngineTest {
     }
 
     @Test
+    void completedSlowEpisodeAtBoundaryIsFlaggedNotCensored() {
+        // Regression: a slow-but-COMPLETE flow at the corpus edge must not be
+        // hidden by the p99-duration censor margin (which the outlier inflates).
+        FlowCluster cluster = new FlowCluster("sig");
+        for (int i = 0; i < 30; i++) {
+            cluster.add(Defects.clean("clean-" + i, T0.plusSeconds(25L * i)));
+        }
+        cluster.add(Defects.slowTransition("slow", T0.plusSeconds(25L * 30)));   // last, at the boundary
+        DetectionResult result = new DetectionEngine(new DetectionConfig(3.0, null), BaselineConfig.defaults())
+                .detect(List.of(cluster));
+        List<Finding> timing = result.allFindings().stream()
+                .filter(f -> f.type() == FindingType.TIMING).toList();
+        assertTrue(!timing.isEmpty(), "the slow completed flow at the boundary should be flagged");
+        assertTrue(timing.stream().allMatch(f -> f.episode().threadId().equals("slow")));
+        assertEquals(0, result.episodesCensored());
+    }
+
+    @Test
     void boundaryCensoringExcludesInFlightEpisodes() {
         FlowCluster cluster = new FlowCluster("sig");
         for (int i = 0; i < 50; i++) {
