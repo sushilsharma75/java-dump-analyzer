@@ -68,6 +68,26 @@ python -m pytest
   as the Java project's `recon/`), for choosing the segmentation config.
 - `report-viewer.html` — standalone, no-server viewer: open it and load a
   `report.json` produced by `tfa analyze --out`.
+- `tools/make_demo.py` — generates a demo corpus + config + ground truth with
+  injected defects (a slow flow, a truncated flow, a wrong-branch flow), so you
+  can prove the pipeline end to end before pointing it at real logs:
+  ```bash
+  python tools/make_demo.py demo
+  python -m tfa.cli analyze  demo/logs --config demo/config.yaml
+  python -m tfa.cli validate demo/logs --config demo/config.yaml --ground-truth demo/ground-truth.yaml
+  ```
+  Edit the `FLOWS` / timings at the top of the script to model your own flows.
+
+### Two things that matter for it to "identify processes" correctly
+
+1. **The population is the baseline.** A slow/odd flow is only flagged when there
+   are *several normal examples of the same flow* to compare against (default:
+   ≥10, `clustering.minClusterSize`). One-vs-one can't self-flag — a lone outlier
+   defines its own baseline.
+2. **A divergence must occur *after* the first-K call sites** (`clustering.signatureK`),
+   because flows are grouped by that prefix. A flow that branches *within* the
+   first K call sites forms its own (often under-sampled) cluster and gets no
+   baseline. Lower K, or make sure your entry markers sit before the branch point.
 
 ## Notes
 
