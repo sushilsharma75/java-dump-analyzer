@@ -97,6 +97,10 @@ class Report:
     total_findings: int
     suppressed_count: int
     top: list[RankedFinding]
+    clusters_total: int = 0
+    clusters_under_sampled: int = 0
+    episodes_skipped_under_sampled: int = 0
+    min_cluster_size: int = 0
 
 
 def render_text(report: Report) -> str:
@@ -130,9 +134,36 @@ def render_text(report: Report) -> str:
         for cl in log_context(f, 5, 5):
             L.append("    " + cl)
     if not report.top:
-        L.append("No findings.")
+        L.append(_no_findings_explanation(report))
     L.append(line)
     return "\n".join(L) + "\n"
+
+
+def _no_findings_explanation(r: Report) -> str:
+    """Say WHY nothing was reported. A zero-episode run is not a clean run."""
+    if r.episodes_evaluated > 0:
+        return ("No findings. " + f"{r.episodes_evaluated:,} episodes were compared against their "
+                "baselines and none deviated - this really is a clean run.")
+    lines = ["NOTHING WAS ANALYSED - this is NOT a clean run.", ""]
+    if r.clusters_total == 0:
+        lines += ["  No flows were found at all. Check that segmentation matches your logs:",
+                  "    - ENTRY_MARKER: are entryCallSites/terminalCallSites the real call sites?",
+                  "    - CORRELATION_ID: does correlationIdPattern match the id in your messages?"]
+    elif r.clusters_under_sampled == r.clusters_total:
+        lines += [f"  All {r.clusters_total} flow group(s) were too small to baseline "
+                  f"({r.episodes_skipped_under_sampled:,} episodes skipped).",
+                  f"  A group needs at least minClusterSize={r.min_cluster_size} examples, because this",
+                  "  tool finds defects by comparing a flow against OTHER RUNS OF THE SAME FLOW.",
+                  "",
+                  "  Fix by either:",
+                  "    - analysing more traffic (more runs of each flow), or",
+                  "    - lowering clustering.minClusterSize (results get statistically weak), or",
+                  "    - lowering clustering.signatureK so similar flows group together."]
+    else:
+        lines += [f"  {r.clusters_under_sampled} of {r.clusters_total} flow groups were too small to "
+                  f"baseline ({r.episodes_skipped_under_sampled:,} episodes skipped),",
+                  "  and every remaining episode was excluded (boundary-censored or outside the eval window)."]
+    return "\n".join(lines)
 
 
 def render_json(report: Report) -> str:
@@ -179,6 +210,11 @@ def render_json(report: Report) -> str:
             "censorMarginMillis": report.censor_margin_millis,
             "totalFindings": report.total_findings,
             "suppressedCount": report.suppressed_count,
+            "clustersTotal": report.clusters_total,
+            "clustersUnderSampled": report.clusters_under_sampled,
+            "episodesSkippedUnderSampled": report.episodes_skipped_under_sampled,
+            "minClusterSize": report.min_cluster_size,
+            "noFindingsReason": _no_findings_explanation(report) if not report.top else "",
         },
         "findings": [finding_obj(i, rf) for i, rf in enumerate(report.top, 1)],
     }

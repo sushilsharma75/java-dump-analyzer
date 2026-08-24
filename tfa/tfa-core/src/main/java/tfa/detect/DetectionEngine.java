@@ -61,9 +61,13 @@ public final class DetectionEngine {
         List<DetectionResult.ClusterFindings> perCluster = new ArrayList<>();
         long evaluated = 0;
         long censored = 0;
+        int underSampled = 0;
+        long skipped = 0;
 
         for (FlowCluster cluster : clusters) {
             if (cluster.isUnderSampled()) {
+                underSampled++;
+                skipped += cluster.size();
                 continue;
             }
             Baseline baseline = ConsensusBuilder.build(cluster, baselineConfig);
@@ -87,7 +91,8 @@ public final class DetectionEngine {
             perCluster.add(new DetectionResult.ClusterFindings(cluster, baseline, clusterFindings));
         }
 
-        return new DetectionResult(perCluster, evaluated, censored, margin, corpusStart, corpusEnd);
+        return new DetectionResult(perCluster, evaluated, censored, margin, corpusStart, corpusEnd,
+                clusters.size(), underSampled, skipped);
     }
 
     /** p99 of the durations, or 0 if none. */

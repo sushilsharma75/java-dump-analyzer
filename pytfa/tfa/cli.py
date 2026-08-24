@@ -305,7 +305,10 @@ def _build_report(config, config_path, result: AnalysisResult) -> Report:
                   config.profile.name, config.segmentation.strategy.value,
                   result.detection.episodes_evaluated, result.detection.episodes_censored,
                   result.detection.margin_millis, len(result.ranking.ranked),
-                  result.ranking.suppressed_count, result.ranking.top)
+                  result.ranking.suppressed_count, result.ranking.top,
+                  result.detection.clusters_total, result.detection.clusters_under_sampled,
+                  result.detection.episodes_skipped_under_sampled,
+                  config.clustering.min_cluster_size)
 
 
 # --------------------------------------------------------- validate / explain

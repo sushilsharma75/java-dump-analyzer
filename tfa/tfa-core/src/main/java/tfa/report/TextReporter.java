@@ -59,9 +59,44 @@ public final class TextReporter {
             }
         }
         if (r.top().isEmpty()) {
-            line(out, "No findings.");
+            for (String l : noFindingsExplanation(r)) {
+                line(out, l);
+            }
         }
         line(out, "==================================================================");
+    }
+
+    /** Say WHY nothing was reported. A zero-episode run is not a clean run. */
+    static List<String> noFindingsExplanation(Report r) {
+        List<String> l = new java.util.ArrayList<>();
+        if (r.episodesEvaluated() > 0) {
+            l.add(String.format("No findings. %,d episodes were compared against their baselines "
+                    + "and none deviated - this really is a clean run.", r.episodesEvaluated()));
+            return l;
+        }
+        l.add("NOTHING WAS ANALYSED - this is NOT a clean run.");
+        l.add("");
+        if (r.clustersTotal() == 0) {
+            l.add("  No flows were found at all. Check that segmentation matches your logs:");
+            l.add("    - ENTRY_MARKER: are entryCallSites/terminalCallSites the real call sites?");
+            l.add("    - CORRELATION_ID: does correlationIdPattern match the id in your messages?");
+        } else if (r.clustersUnderSampled() == r.clustersTotal()) {
+            l.add(String.format("  All %d flow group(s) were too small to baseline (%,d episodes skipped).",
+                    r.clustersTotal(), r.episodesSkippedUnderSampled()));
+            l.add(String.format("  A group needs at least minClusterSize=%d examples, because this",
+                    r.minClusterSize()));
+            l.add("  tool finds defects by comparing a flow against OTHER RUNS OF THE SAME FLOW.");
+            l.add("");
+            l.add("  Fix by either:");
+            l.add("    - analysing more traffic (more runs of each flow), or");
+            l.add("    - lowering clustering.minClusterSize (results get statistically weak), or");
+            l.add("    - lowering clustering.signatureK so similar flows group together.");
+        } else {
+            l.add(String.format("  %d of %d flow groups were too small to baseline (%,d episodes skipped),",
+                    r.clustersUnderSampled(), r.clustersTotal(), r.episodesSkippedUnderSampled()));
+            l.add("  and every remaining episode was excluded (boundary-censored or outside the eval window).");
+        }
+        return l;
     }
 
     private static void line(Appendable out, String s) throws IOException {

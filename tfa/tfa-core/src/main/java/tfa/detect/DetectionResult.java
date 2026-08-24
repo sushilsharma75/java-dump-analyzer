@@ -17,7 +17,10 @@ public record DetectionResult(
         long episodesCensored,
         long marginMillis,
         Instant corpusStart,
-        Instant corpusEnd
+        Instant corpusEnd,
+        int clustersTotal,
+        int clustersUnderSampled,
+        long episodesSkippedUnderSampled
 ) {
     /** Findings for one cluster, with the baseline they were measured against. */
     public record ClusterFindings(FlowCluster cluster, Baseline baseline, List<Finding> findings) {}

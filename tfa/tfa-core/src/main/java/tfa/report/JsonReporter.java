@@ -42,6 +42,12 @@ public final class JsonReporter {
         summary.put("censorMarginMillis", r.censorMarginMillis());
         summary.put("totalFindings", r.totalFindings());
         summary.put("suppressedCount", r.suppressedCount());
+        summary.put("clustersTotal", r.clustersTotal());
+        summary.put("clustersUnderSampled", r.clustersUnderSampled());
+        summary.put("episodesSkippedUnderSampled", r.episodesSkippedUnderSampled());
+        summary.put("minClusterSize", r.minClusterSize());
+        summary.put("noFindingsReason", r.top().isEmpty()
+                ? String.join("\n", TextReporter.noFindingsExplanation(r)) : "");
         root.put("summary", summary);
 
         List<Object> findings = new ArrayList<>();

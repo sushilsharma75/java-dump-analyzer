@@ -462,7 +462,9 @@ public final class Main {
                 Version.VERSION, java.time.Instant.now(), configHash, fingerprint,
                 config.profile().name(), config.segmentation().strategy().name(),
                 detection.episodesEvaluated(), detection.episodesCensored(), detection.marginMillis(),
-                ranking.ranked().size(), ranking.suppressedCount(), ranking.top());
+                ranking.ranked().size(), ranking.suppressedCount(), ranking.top(),
+                detection.clustersTotal(), detection.clustersUnderSampled(),
+                detection.episodesSkippedUnderSampled(), config.clustering().minClusterSize());
 
         TextReporter.render(report, System.out);
 

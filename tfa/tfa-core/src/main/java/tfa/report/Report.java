@@ -21,5 +21,9 @@ public record Report(
         long censorMarginMillis,
         int totalFindings,
         int suppressedCount,
-        List<RankedFinding> top
+        List<RankedFinding> top,
+        int clustersTotal,
+        int clustersUnderSampled,
+        long episodesSkippedUnderSampled,
+        int minClusterSize
 ) {}
