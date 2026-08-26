@@ -31,6 +31,7 @@ Usage:
   tfa analyze  <dir> --config <yaml> [--out <file>] [--suppressions <file>]
   tfa validate <dir> --config <yaml> --ground-truth <file>
   tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
+  tfa compare  <dir> --good <refId> --bad <refId> [--config <yaml>] [--all] [--out <file>]
   tfa serve [--port 8080]
 """
 
@@ -352,6 +353,52 @@ def cmd_explain(args):
     print("=" * 58)
 
 
+def cmd_compare(args):
+    """Compare one known-GOOD reference flow against one known-BAD one."""
+    from .compare import compare_flows, episodes_for_ids, render_comparison
+    from .ingest import FormatProfile
+    d = args[0] if args and not args[0].startswith("--") else None
+    good = _opt(args, "good")
+    bad = _opt(args, "bad")
+    if d is None or not good or not bad:
+        print("usage: tfa compare <dir> --good <refId> --bad <refId> "
+              "[--config <yaml>] [--all] [--out <file>]", file=sys.stderr)
+        sys.exit(1)
+
+    cfg_path = _opt(args, "config")
+    if cfg_path:
+        config = AnalysisConfig.load(Path(cfg_path))
+        profile, threshold, sample = config.profile, config.match_threshold, config.sample_lines
+    else:
+        profile, threshold, sample = FormatProfile.default(), 0.95, 1000
+
+    reader = FileSetReader(Path(d), RecordParser(profile), ParseStats())
+    reader.require_match_rate(sample, threshold)
+    good_ep, bad_ep = episodes_for_ids(reader.records(), good, bad)
+    result = compare_flows(good_ep, bad_ep, good, bad)
+
+    print(render_comparison(result, show_all="--all" in args), end="")
+
+    out = _opt(args, "out")
+    if out:
+        import json
+        payload = {
+            "goodId": result.good_id, "badId": result.bad_id,
+            "goodRecords": result.good.size(), "badRecords": result.bad.size(),
+            "goodDurationMs": result.good_duration_ms, "badDurationMs": result.bad_duration_ms,
+            "breakIndex": result.break_index,
+            "steps": [{"kind": s.kind, "callSite": s.call_site,
+                       "fields": [{"key": f.key, "good": f.good, "bad": f.bad, "kind": f.kind}
+                                  for f in s.fields]} for s in result.steps],
+            "errorsInBad": [f"{r.timestamp} | {r.level} | {r.call_site()} | {r.message}"
+                            for r in result.errors_only_in_bad],
+        }
+        Path(out).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"\n[JSON comparison written to {out}]")
+    if result.break_index is not None:
+        sys.exit(5)
+
+
 def cmd_serve(args):
     from .web import start
     start(int(_opt(args, "port", "8080")))
@@ -361,6 +408,7 @@ COMMANDS = {
     "parse": cmd_parse, "detect-format": cmd_detect_format, "segment": cmd_segment,
     "cluster": cmd_cluster, "baseline": cmd_baseline, "detect": cmd_detect,
     "analyze": cmd_analyze, "validate": cmd_validate, "explain": cmd_explain,
+    "compare": cmd_compare,
     "serve": cmd_serve,
 }
 
@@ -388,6 +436,9 @@ def main(argv=None):
     except NotImplementedError as e:
         print(f"unsupported: {e}", file=sys.stderr)
         return 3
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

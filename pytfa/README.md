@@ -32,6 +32,7 @@ tfa detect   <dir> --config <yaml>                      # raw (unranked) finding
 tfa analyze  <dir> --config <yaml> [--out report.json] [--suppressions <yaml>]
 tfa validate <dir> --config <yaml> --ground-truth <yaml>
 tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
+tfa compare  <dir> --good <refId> --bad <refId> [--config <yaml>] [--all] [--out <file>]
 tfa serve [--port 8080]                                 # local web UI
 ```
 
@@ -113,3 +114,28 @@ Every record sharing an id becomes one episode, in true time order, across all
 service log files. Records with no id are dropped. `tools/make_microservice_demo.py`
 generates an order/inventory/payment corpus with a payment-service-down defect and
 proves detection end to end.
+
+## Comparing two reference flows (no population needed)
+
+`analyze` needs a population ("what did the other N runs do?"). When you have
+exactly **one known-good and one known-bad reference id**, use `compare` instead:
+
+```bash
+tfa compare /path/to/logs --good 4f3a9c2e...  --bad 8b1d5f7a...
+```
+
+Reference ids are matched as **exact whole tokens** (no spaces, no partial
+matches), across every service log file. The report gives:
+
+- **THE BREAK** — the first step where the two flows part company, whether that
+  is a different branch or the same step with different data.
+- **PAYLOAD / PARAMETER DIFFERENCES** — per shared step: a field missing in the
+  bad flow, an extra field, or a differing value.
+- **ERRORS / EXCEPTIONS IN THE BAD FLOW** — with stack traces.
+- **ALIGNED FLOW** — the two call-site sequences diffed side by side
+  (`=` same, `-` only in good, `+` only in bad, `~` payload differs), so a whole
+  missing interface call (e.g. the payment leg) is visible at a glance.
+
+This covers the four ways a flow breaks: business-logic branch, exception,
+missing request parameter, and wrong payload value. Exit code is 5 when a break
+is found, 0 when the flows match. `--out` writes the same data as JSON.
