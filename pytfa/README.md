@@ -128,10 +128,26 @@ proves detection end to end.
 exactly **one known-good and one known-bad reference id**, use `compare` instead:
 
 ```bash
-tfa compare /path/to/logs --good 4f3a9c2e...  --bad 8b1d5f7a...
+tfa compare /path/to/logs --good 4f3a9c2e...  --bad 8b1d5f7a...   # by trace id
+tfa compare /path/to/logs --good ORD-1001     --bad ORD-1002      # by order id
 ```
 
 No `--config` is needed or used.
+
+**Any unique id works as the reference** — a trace id, an order id, a payment
+id, a session id. A business id is usually logged by only one service, so ids
+that co-occur with it (a `trace_id` on the same line, say) are followed
+automatically to pull in the rest of the flow; the report says which id was used
+and how many extra lines it brought in:
+
+```
+GOOD : ORD-1001
+       21 lines, 454 ms
+       linked via trace_id=4f3a9c2e...  (+16 lines beyond the id itself)
+```
+
+An id appearing in **both** flows is never followed, so the two flows can't merge.
+Pass `--no-link` to compare strictly on the given ids alone.
 
 **The log format does not matter.** `compare` uses no format profile, no config
 and no match-rate check - it reads raw lines from every file and derives what it

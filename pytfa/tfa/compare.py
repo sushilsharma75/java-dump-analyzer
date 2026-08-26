@@ -160,6 +160,8 @@ class FlowStep:
 class ReferenceFlow:
     ref_id: str
     steps: list[FlowStep]
+    linked_ids: dict[str, str] = field(default_factory=dict)   # key -> value used to expand
+    direct_lines: int = 0                                      # lines carrying ref_id itself
 
     def size(self) -> int:
         return len(self.steps)
@@ -242,6 +244,33 @@ def _exact_token(ref: str) -> re.Pattern:
     return re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(ref) + r"(?![0-9A-Za-z_-])")
 
 
+# keys whose value identifies the same flow under another name
+_LINK_KEY = re.compile(r'(trace|span|correlation|request|txn|transaction|session|'
+                       r'order|payment|invoice|job|batch).{0,4}id$|^id$', re.IGNORECASE)
+_MAX_LINKS = 3
+_MIN_LINK_LEN = 6
+
+
+def _link_candidates(steps: list[FlowStep], exclude: set[str]) -> dict[str, str]:
+    """Ids co-occurring with the reference id that name the same flow.
+
+    Lets a business id (an order id) reach the parts of the flow that only carry
+    a technical id (a trace id), and vice versa.
+    """
+    found: dict[str, str] = {}
+    for st in steps:
+        for key, value in extract_payload(st.raw).items():
+            if not _LINK_KEY.search(key):
+                continue
+            value = value.strip().strip('"')
+            if len(value) < _MIN_LINK_LEN or value in exclude or " " in value:
+                continue
+            found.setdefault(key, value)
+            if len(found) >= _MAX_LINKS:
+                return found
+    return found
+
+
 def _make_step(line: str, src: str, line_no: int, refs: tuple[str, str]) -> FlowStep:
     m = _CALL_SITE.search(line)
     call_site = f"{m.group(1)}:{m.group(2)}" if m else None
@@ -250,12 +279,19 @@ def _make_step(line: str, src: str, line_no: int, refs: tuple[str, str]) -> Flow
                     call_site, key, significant_payload(line))
 
 
-def read_reference_flows(log_dir, good_id: str, bad_id: str) -> tuple[ReferenceFlow, ReferenceFlow]:
+def read_reference_flows(log_dir, good_id: str, bad_id: str, follow_links: bool = True
+                         ) -> tuple[ReferenceFlow, ReferenceFlow]:
     """Read raw lines from every file, keeping those carrying each reference id.
 
     No format profile, no match-rate check - any text log works. A following line
     that carries no reference id but looks like a stack frame is attached to the
     step above it.
+
+    When ``follow_links`` is set (the default), ids that co-occur with the
+    reference id - a trace id alongside an order id, say - are used to pull in
+    the rest of the flow, so a business id still reaches the services that only
+    log a technical id. A linking id that appears in BOTH flows is ignored, so
+    the two flows can never be merged.
     """
     good_id = validate_reference_id(good_id)
     bad_id = validate_reference_id(bad_id)
@@ -263,34 +299,54 @@ def read_reference_flows(log_dir, good_id: str, bad_id: str) -> tuple[ReferenceF
         raise ValueError("the two reference ids are identical - nothing to compare")
 
     refs = (good_id, bad_id)
-    patterns = {good_id: _exact_token(good_id), bad_id: _exact_token(bad_id)}
-    buckets: dict[str, list[FlowStep]] = {good_id: [], bad_id: []}
-
     root = Path(log_dir)
     files = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file())
-    for path in files:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        last_ref: Optional[str] = None
-        for line_no, line in enumerate(text.splitlines(), 1):
-            matched = next((ref for ref, pat in patterns.items() if pat.search(line)), None)
-            if matched is not None:
-                buckets[matched].append(_make_step(line, str(path), line_no, refs))
-                last_ref = matched
-            elif last_ref is not None and (_STACK.match(line) or line.startswith((" ", "\t"))):
-                if buckets[last_ref]:
-                    buckets[last_ref][-1].continuations.append(line.rstrip("\n"))
-            elif line.strip():
-                last_ref = None      # an unrelated line ends the continuation block
+
+    def scan(wanted: dict[str, set[str]]) -> dict[str, list[FlowStep]]:
+        """wanted: bucket -> set of id strings to match as exact tokens."""
+        pats = {b: [_exact_token(v) for v in vals] for b, vals in wanted.items()}
+        buckets: dict[str, list[FlowStep]] = {b: [] for b in wanted}
+        seen: dict[str, set[tuple[str, int]]] = {b: set() for b in wanted}
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            last: Optional[str] = None
+            for line_no, line in enumerate(text.splitlines(), 1):
+                hit = next((b for b, ps in pats.items() if any(p.search(line) for p in ps)), None)
+                if hit is not None:
+                    if (str(path), line_no) not in seen[hit]:
+                        seen[hit].add((str(path), line_no))
+                        buckets[hit].append(_make_step(line, str(path), line_no, refs))
+                    last = hit
+                elif last is not None and (_STACK.match(line) or line.startswith((" ", "\t"))):
+                    if buckets[last]:
+                        buckets[last][-1].continuations.append(line.rstrip("\n"))
+                elif line.strip():
+                    last = None
+        return buckets
+
+    direct = scan({good_id: {good_id}, bad_id: {bad_id}})
+    direct_counts = {good_id: len(direct[good_id]), bad_id: len(direct[bad_id])}
+    links: dict[str, dict[str, str]] = {good_id: {}, bad_id: {}}
+
+    if follow_links:
+        g_links = _link_candidates(direct[good_id], {good_id, bad_id})
+        b_links = _link_candidates(direct[bad_id], {good_id, bad_id})
+        shared = set(g_links.values()) & set(b_links.values())   # never merge the flows
+        links[good_id] = {k: v for k, v in g_links.items() if v not in shared}
+        links[bad_id] = {k: v for k, v in b_links.items() if v not in shared}
+        if links[good_id] or links[bad_id]:
+            direct = scan({good_id: {good_id} | set(links[good_id].values()),
+                           bad_id: {bad_id} | set(links[bad_id].values())})
 
     out = []
     for ref in (good_id, bad_id):
-        steps = buckets[ref]
+        steps = direct[ref]
         # stable sort by timestamp where present; file order is the tie-break
         steps.sort(key=lambda s: (s.timestamp is None, s.timestamp or datetime.min))
-        out.append(ReferenceFlow(ref, steps))
+        out.append(ReferenceFlow(ref, steps, links[ref], direct_counts[ref]))
     return out[0], out[1]
 
 
@@ -350,6 +406,10 @@ def render_comparison(c: ComparisonResult, show_all: bool = False) -> str:
         flag = "  (contains an error)" if flow.has_error() else ""
         L.append(f"  {name} : {flow.ref_id}")
         L.append(f"         {flow.size()} lines, {flow.duration_ms():,} ms{flag}")
+        if flow.linked_ids:
+            linked = ", ".join(f"{k}={v}" for k, v in flow.linked_ids.items())
+            extra = flow.size() - flow.direct_lines
+            L.append(f"         linked via {linked}  (+{extra} lines beyond the id itself)")
     L.append("")
 
     if c.good.size() == 0 or c.bad.size() == 0:

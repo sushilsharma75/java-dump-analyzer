@@ -128,3 +128,54 @@ def test_flows_are_stitched_across_differently_formatted_files(tmp_path):
 def test_missing_reference_id_is_reported_clearly(tmp_path):
     write(tmp_path, "a.log", "10:00:00.100 G1 ok\n")
     assert "no log lines found" in render_comparison(run(tmp_path))
+
+
+# ------------------------------------------- business ids via linked technical ids
+
+def test_business_id_reaches_the_full_cross_service_flow(tmp_path):
+    """An order id logged by only one service still pulls in the whole flow via
+    the trace id it co-occurs with."""
+    write(tmp_path, "order.log",
+          "2026-01-01 10:00:00.100 new order ORD-1 [trace_id=aaaaaaaa1111]\n"
+          "2026-01-01 10:00:01.100 new order ORD-2 [trace_id=bbbbbbbb2222]\n")
+    write(tmp_path, "payment.log",             # never mentions the order id
+          "2026-01-01 10:00:00.500 charge ok amount=10 [trace_id=aaaaaaaa1111]\n"
+          "2026-01-01 10:00:01.500 charge REFUSED amount=10 [trace_id=bbbbbbbb2222]\n")
+    good, bad = read_reference_flows(tmp_path, "ORD-1", "ORD-2")
+    assert good.size() == 2 and bad.size() == 2          # order + payment legs
+    assert good.direct_lines == 1                        # only one line had the order id
+    assert good.linked_ids == {"trace_id": "aaaaaaaa1111"}
+
+
+def test_linking_can_be_disabled(tmp_path):
+    write(tmp_path, "order.log",
+          "2026-01-01 10:00:00.100 new order ORD-1 [trace_id=aaaaaaaa1111]\n"
+          "2026-01-01 10:00:01.100 new order ORD-2 [trace_id=bbbbbbbb2222]\n")
+    write(tmp_path, "payment.log",
+          "2026-01-01 10:00:00.500 charge ok [trace_id=aaaaaaaa1111]\n"
+          "2026-01-01 10:00:01.500 charge no [trace_id=bbbbbbbb2222]\n")
+    good, _ = read_reference_flows(tmp_path, "ORD-1", "ORD-2", follow_links=False)
+    assert good.size() == 1
+
+
+def test_a_shared_linking_id_never_merges_the_two_flows(tmp_path):
+    """If both references carry the SAME secondary id, it must not be followed -
+    otherwise the good and bad flows would collapse into each other."""
+    write(tmp_path, "a.log",
+          "2026-01-01 10:00:00.100 start ORD-1 sessionId=sharedsession9\n"
+          "2026-01-01 10:00:01.100 start ORD-2 sessionId=sharedsession9\n"
+          "2026-01-01 10:00:02.100 unrelated noise sessionId=sharedsession9\n")
+    good, bad = read_reference_flows(tmp_path, "ORD-1", "ORD-2")
+    assert good.size() == 1 and bad.size() == 1
+    assert good.linked_ids == {} and bad.linked_ids == {}
+
+
+def test_link_expansion_is_reported(tmp_path):
+    write(tmp_path, "order.log",
+          "2026-01-01 10:00:00.100 new order ORD-1 [trace_id=aaaaaaaa1111]\n"
+          "2026-01-01 10:00:01.100 new order ORD-2 [trace_id=bbbbbbbb2222]\n")
+    write(tmp_path, "payment.log",
+          "2026-01-01 10:00:00.500 charge ok [trace_id=aaaaaaaa1111]\n"
+          "2026-01-01 10:00:01.500 charge no [trace_id=bbbbbbbb2222]\n")
+    text = render_comparison(compare_flows(*read_reference_flows(tmp_path, "ORD-1", "ORD-2")))
+    assert "linked via trace_id=aaaaaaaa1111" in text

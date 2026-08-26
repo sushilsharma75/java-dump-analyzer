@@ -30,7 +30,8 @@ Usage:
   tfa analyze  <dir> --config <yaml> [--out <file>] [--suppressions <file>]
   tfa validate <dir> --config <yaml> --ground-truth <file>
   tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
-  tfa compare  <dir> --good <refId> --bad <refId> [--all] [--out <file>]   (any log format)
+  tfa compare  <dir> --good <refId> --bad <refId> [--all] [--no-link] [--out <file>]
+               (any log format; refId can be a trace id, order id, any unique id)
   tfa serve [--port 8080]
 """
 
@@ -332,11 +333,12 @@ def cmd_compare(args):
     good = _opt(args, "good")
     bad = _opt(args, "bad")
     if d is None or not good or not bad:
-        print("usage: tfa compare <dir> --good <refId> --bad <refId> [--all] [--out <file>]",
-              file=sys.stderr)
+        print("usage: tfa compare <dir> --good <refId> --bad <refId> "
+              "[--all] [--no-link] [--out <file>]", file=sys.stderr)
         sys.exit(1)
 
-    good_flow, bad_flow = read_reference_flows(Path(d), good, bad)
+    good_flow, bad_flow = read_reference_flows(Path(d), good, bad,
+                                               follow_links="--no-link" not in args)
     result = compare_flows(good_flow, bad_flow)
     print(render_comparison(result, show_all="--all" in args), end="")
 
@@ -348,6 +350,8 @@ def cmd_compare(args):
             "goodLines": result.good.size(), "badLines": result.bad.size(),
             "goodDurationMs": result.good.duration_ms(),
             "badDurationMs": result.bad.duration_ms(),
+            "goodLinkedIds": result.good.linked_ids,
+            "badLinkedIds": result.bad.linked_ids,
             "breakIndex": result.break_index,
             "steps": [{"kind": s.kind, "step": s.label,
                        "fields": [{"key": f.key, "good": f.good, "bad": f.bad, "kind": f.kind}
