@@ -12,7 +12,7 @@ from typing import Optional
 from .cluster import SignatureClusterer
 from .config import AnalysisConfig
 from .detect import DetectionEngine, DetectionResult
-from .ingest import FileSetReader, ParseStats, RecordParser
+from .ingest import FileSetReader, ParseStats
 from .model import FlowCluster
 from .rank import FindingRanker, RankingResult, Suppressions
 from .segment import StreamingSegmenter
@@ -32,9 +32,7 @@ def analyze(log_directory: Path, config: AnalysisConfig,
             suppressions: Optional[Suppressions] = None) -> AnalysisResult:
     if suppressions is None:
         suppressions = Suppressions.none()
-    parser = RecordParser(config.profile)
-    reader = FileSetReader(Path(log_directory), parser, ParseStats())
-    reader.require_match_rate(config.sample_lines, config.match_threshold)
+    reader = FileSetReader(Path(log_directory), ParseStats())
     ordered_files = reader.ordered_files
 
     segmenter = StreamingSegmenter(config.segmentation.build_strategy())

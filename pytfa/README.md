@@ -1,9 +1,14 @@
 # tfa (Python) — Thread Flow Analyzer
 
-A pure-Python port of the Java Thread Flow Analyzer. Reconstructs per-thread
-execution flows from an offline log dump, compares flows of the same kind against
-each other, and ranks the deviations. **The population is the baseline** — no
-golden path is authored. Runs locally and offline, streaming, with flat memory.
+Reconstructs execution flows from an offline log dump, compares flows of the same
+kind against each other, and ranks the deviations. **The population is the
+baseline** — no golden path is authored. Runs locally and offline, streaming.
+
+**Any log format works — there is no format profile and no parser to configure.**
+Every line is read best-effort: timestamp, level, thread and `Class:line` where
+present, and a normalised message template as the line's identity where not.
+Nothing is ever rejected for "not matching a format", so a run can neither abort
+nor silently analyse a fraction of the corpus because a layout was unexpected.
 
 This is a faithful, feature-complete port of the Java implementation under
 `../tfa`: the same pipeline, the same config format, the same CLI commands, the
@@ -23,8 +28,7 @@ Requires Python 3.10+. Dev/test extra: `pip install -e ".[test]"`.
 ## Commands
 
 ```bash
-tfa parse <dir> [--threshold 0.95] [--sample 1000]     # ingestion statistics
-tfa detect-format <file> [--sample 500]                # infer a format profile
+tfa parse <dir>                                         # ingestion statistics
 tfa segment  <dir> --config <yaml>                      # episode distributions
 tfa cluster  <dir> --config <yaml>                      # flow-cluster distribution
 tfa baseline <dir> --config <yaml>                      # consensus baseline per cluster
@@ -43,7 +47,8 @@ tfa serve [--port 8080]                                 # local web UI
 | Module | Java counterpart |
 |---|---|
 | `tfa/model.py` | `tfa.model` — LogRecord, Episode, FlowCluster, Baseline, Finding, enums |
-| `tfa/ingest.py` | `tfa.ingest` — FormatProfile, RecordParser, FileSetReader, FormatDetector |
+| `tfa/extract.py` | *(new)* format-agnostic field extraction shared by ingest and compare |
+| `tfa/ingest.py` | `tfa.ingest` — LineExtractor, FileSetReader (no profile, no parser) |
 | `tfa/config.py` | `tfa.config` — AnalysisConfig + sub-configs, YAML loading |
 | `tfa/segment.py` | `tfa.segment` — FlowKeyStrategy + Entry/IdleGap/CorrelationId, StreamingSegmenter |
 | `tfa/cluster.py` | `tfa.cluster` — SignatureClusterer |
@@ -92,8 +97,10 @@ python -m pytest
 
 ## Notes
 
-- Config YAML is identical to the Java project (`profile`, `segmentation`,
-  `clustering`, `baseline`, `detection`, `ranking`, plus optional `profiles:`).
+- Config YAML holds only analysis settings: `segmentation`, `clustering`,
+  `baseline`, `detection`, `ranking`. There is no `profile`/`profiles`/`ingest`
+  section — the format is never configured. (The Java project under `../tfa`
+  still uses format profiles; the two have diverged here.)
 - The web UI is bound to `127.0.0.1` and has no authentication — run it only on a
   machine you control. It shells out to `python -m tfa.cli` locally and reads only
   the folder you name; nothing is uploaded.

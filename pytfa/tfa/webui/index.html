@@ -94,9 +94,7 @@ const $=(s,r=document)=>r.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const pct=x=>(x==null?0:Math.round(x*100))+"%";
 
-const DEFAULT_CONFIG = `profile: default
-
-segmentation:
+const DEFAULT_CONFIG = `segmentation:
   strategy: ENTRY_MARKER
   entryCallSites:
     - com.bank.order.OrderController:45
@@ -203,7 +201,7 @@ async function renderReport(runId) {
   const findings = d.findings || [];
   const s = d.summary || {}, m = d.meta || {};
   let html = `<h2>Report — top findings</h2>`;
-  html += `<div class="kv">${m.profile||"?"} / ${m.strategy||"?"} · ${s.episodesEvaluated??"?"} episodes evaluated, ${s.episodesCensored??0} censored · ${s.totalFindings??0} findings`
+  html += `<div class="kv">${m.strategy||"?"} · ${s.episodesEvaluated??"?"} episodes evaluated, ${s.episodesCensored??0} censored · ${s.totalFindings??0} findings`
         + ` · <a class="dl mono" href="/api/artifact?run=${runId}&name=report.json">download report.json</a></div>`;
   if (!findings.length) {
     const reason = (s.noFindingsReason || "").trim();

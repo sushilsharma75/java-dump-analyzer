@@ -5,7 +5,6 @@ from tfa.cluster import SignatureClusterer
 from tfa.config import (AnalysisConfig, BaselineConfig, ClusteringConfig, DetectionConfig,
                         RankingConfig, SegmentationConfig, StrategyKind)
 from tfa.detect import DetectionEngine
-from tfa.ingest import FormatProfile
 from tfa.model import Episode, FindingType, FlowCluster, LogRecord, TerminalStatus
 from tfa.rank import FindingRanker, SuppressionRule, Suppressions
 from tfa.report import CorpusFingerprint, Report, log_context, render_text
@@ -79,7 +78,7 @@ def test_report_renders_stack_traces():
         c.add(testkit.clean(f"clean-{i}", T0 + timedelta(seconds=10 + i)))
     c.add(_errored_stack("boom", T0 + timedelta(seconds=40)))
     ranking = FindingRanker(RankingConfig(), Suppressions.none()).rank(_detection(c))
-    report = Report("test", T0, "cfg", CorpusFingerprint("h", [], T0, T0), "default", "ENTRY_MARKER",
+    report = Report("test", T0, "cfg", CorpusFingerprint("h", [], T0, T0), "ENTRY_MARKER",
                     0, 0, 0, len(ranking.ranked), ranking.suppressed_count, ranking.top)
     text = render_text(report)
     assert "java.lang.RuntimeException: boom" in text
@@ -89,7 +88,7 @@ def test_report_renders_stack_traces():
 # ---------------- validate / explain ----------------
 
 def _config(margin):
-    return AnalysisConfig(FormatProfile.default(), 0.95, 1000,
+    return AnalysisConfig(
                           SegmentationConfig(StrategyKind.ENTRY_MARKER,
                                              frozenset({"com.acme.Entry:1"}), frozenset({"com.acme.Entry:99"}), 5000),
                           ClusteringConfig(3, 10, 200), BaselineConfig(),

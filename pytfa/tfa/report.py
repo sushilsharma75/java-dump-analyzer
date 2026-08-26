@@ -89,7 +89,6 @@ class Report:
     run_timestamp: datetime
     config_hash: str
     corpus: CorpusFingerprint
-    profile_name: str
     strategy_name: str
     episodes_evaluated: int
     episodes_censored: int
@@ -114,7 +113,7 @@ def render_text(report: Report) -> str:
     L.append(f"  config hash     : {report.config_hash}")
     L.append(f"  corpus hash     : {report.corpus.hash}")
     L.append(f"  corpus range    : {report.corpus.corpus_start} -> {report.corpus.corpus_end}")
-    L.append(f"  profile/strategy: {report.profile_name} / {report.strategy_name}")
+    L.append(f"  strategy        : {report.strategy_name}")
     L.append(f"  episodes        : {report.episodes_evaluated:,} evaluated, "
              f"{report.episodes_censored:,} censored (margin {report.censor_margin_millis:,}ms)")
     L.append(f"  findings        : {report.total_findings:,} total, "
@@ -200,7 +199,6 @@ def render_json(report: Report) -> str:
             "corpusHash": report.corpus.hash,
             "corpusStart": str(report.corpus.corpus_start),
             "corpusEnd": str(report.corpus.corpus_end),
-            "profile": report.profile_name,
             "strategy": report.strategy_name,
             "files": [{"name": fe.name, "sizeBytes": fe.size_bytes} for fe in report.corpus.files],
         },

@@ -11,8 +11,7 @@ from .baseline import build_baseline
 from .cluster import SignatureClusterer
 from .config import AnalysisConfig
 from .detect import DetectionEngine
-from .ingest import (FileSetReader, MatchRateError, ParseStats, RecordParser,
-                     detect_format, epoch_millis, profile_to_yaml)
+from .ingest import FileSetReader, ParseStats, epoch_millis
 from .model import FlowCluster, TerminalStatus
 from .rank import Suppressions
 from .report import CorpusFingerprint, Report, render_json, render_text, sha256_hex
@@ -20,10 +19,10 @@ from .segment import StreamingSegmenter
 from .validate import Explainer, GroundTruth, Validator
 
 USAGE = """tfa - Thread Flow Analyzer (Python)
+           Reads any log format - no profile or parser config.
 
 Usage:
-  tfa parse <dir> [--threshold 0.95] [--sample 1000]
-  tfa detect-format <file> [--sample 500]
+  tfa parse <dir>
   tfa segment  <dir> --config <yaml>
   tfa cluster  <dir> --config <yaml>
   tfa baseline <dir> --config <yaml>
@@ -63,24 +62,14 @@ def _bucket_index(bounds, value):
 
 def cmd_parse(args):
     d = args[0]
-    profile = None
-    from .ingest import FormatProfile
-    profile = FormatProfile.default()
-    threshold = float(_opt(args, "threshold", "0.95"))
-    sample = int(_opt(args, "sample", "1000"))
     stats = ParseStats()
-    reader = FileSetReader(Path(d), RecordParser(profile), stats)
-    print(f"profile           : {profile.name} (capabilities {sorted(c.value for c in profile.capabilities)})")
+    reader = FileSetReader(Path(d), stats)
     print(f"files (ts order)  : {len(reader.ordered_files)}")
-    mr = reader.require_match_rate(sample, threshold)
-    print(f"sample match rate : {mr.rate * 100:.2f}% ({mr.matched} matched / {mr.malformed} malformed of {mr.sampled_lines} sampled)")
 
     threads, sites = set(), set()
     tmin = tmax = None
-    count = 0
     t0 = time.time()
     for r in reader.records():
-        count += 1
         if r.thread_id:
             threads.add(r.thread_id)
         cs = r.call_site()
@@ -93,32 +82,18 @@ def cmd_parse(args):
     print("-" * 58)
     print("INGESTION STATISTICS")
     print(f"  lines total     : {stats.total_lines:,}")
-    print(f"    matched       : {stats.matched:,}")
+    print(f"    records       : {stats.records:,}")
     print(f"    continuation  : {stats.continuation:,}")
-    print(f"    malformed     : {stats.malformed:,}")
-    print(f"  records         : {count:,}")
     print(f"  distinct threads: {len(threads):,}")
     print(f"  distinct sites  : {len(sites):,}")
     print(f"  timestamp range : {tmin}  ->  {tmax}")
-    if stats.timestamp_parse_failures:
-        print(f"  ts parse fails  : {stats.timestamp_parse_failures:,}")
     print(f"  wall time       : {elapsed:,} ms")
-    if stats.malformed:
-        print("  malformed sample:")
-        for f, ln, text in stats.malformed_sample:
-            print(f"    {Path(f).name}:{ln}  {text[:140]}")
-
-
-# ------------------------------------------------------------- detect-format
-
-def cmd_detect_format(args):
-    d = detect_format(Path(args[0]), int(_opt(args, "sample", "500")))
-    print(f"# detected from {args[0]} ({d.sampled} lines sampled)")
-    print(f"# proposed profile match rate: {d.match_rate * 100:.2f}%")
-    print(f"# note: {d.note}\n")
-    print(profile_to_yaml(d.profile), end="")
-    if d.match_rate < 0.95:
-        print(f"\n# WARNING: match rate {d.match_rate * 100:.2f}% is below 95%. Review before use.")
+    if stats.without_timestamp:
+        print(f"  NOTE: {stats.without_timestamp:,} line(s) had no recognisable timestamp "
+              f"(file order preserved for those).")
+    if stats.without_call_site:
+        print(f"  NOTE: {stats.without_call_site:,} line(s) had no Class:line; a normalised "
+              f"message template was used as their identity.")
 
 
 # ------------------------------------------------------------------- segment
@@ -133,10 +108,8 @@ _DUR_L = ["<100ms", "<1s", "<5s", "<30s", "<5m", "longer"]
 
 def cmd_segment(args):
     d, config = args[0], AnalysisConfig.load(Path(_opt(args, "config")))
-    reader = FileSetReader(Path(d), RecordParser(config.profile), ParseStats())
-    reader.require_match_rate(config.sample_lines, config.match_threshold)
+    reader = FileSetReader(Path(d), ParseStats())
     strategy = config.segmentation.build_strategy()
-    print(f"profile           : {config.profile.name}")
     print(f"strategy          : {strategy.name}")
 
     per_thread: dict[str, int] = {}
@@ -183,8 +156,7 @@ def cmd_segment(args):
 # ------------------------------------------------- cluster / baseline / detect
 
 def _clusters_from(d: Path, config: AnalysisConfig) -> list[FlowCluster]:
-    reader = FileSetReader(d, RecordParser(config.profile), ParseStats())
-    reader.require_match_rate(config.sample_lines, config.match_threshold)
+    reader = FileSetReader(d, ParseStats())
     clusterer = SignatureClusterer(config.clustering.signature_k)
     StreamingSegmenter(config.segmentation.build_strategy()).segment(reader.records(), clusterer.add)
     return clusterer.finish(config.clustering.min_cluster_size)
@@ -197,7 +169,6 @@ _CS_L = ["1", "2-9", "10-49", "50-199", "200-999", ">=1000"]
 def cmd_cluster(args):
     d, config = Path(args[0]), AnalysisConfig.load(Path(_opt(args, "config")))
     k = config.clustering.signature_k
-    print(f"profile           : {config.profile.name}")
     print(f"strategy          : {config.segmentation.strategy.value}")
     print(f"signature K       : {k}   (min cluster size {config.clustering.min_cluster_size}, "
           f"ceiling {config.clustering.cluster_ceiling})")
@@ -228,7 +199,6 @@ def cmd_cluster(args):
 def cmd_baseline(args):
     d, config = Path(args[0]), AnalysisConfig.load(Path(_opt(args, "config")))
     clusters = _clusters_from(d, config)
-    print(f"profile           : {config.profile.name}")
     print(f"strategy          : {config.segmentation.strategy.value}")
     if config.baseline.baseline_start or config.baseline.baseline_end:
         print(f"baseline window   : {config.baseline.baseline_start} -> {config.baseline.baseline_end}")
@@ -262,7 +232,6 @@ def cmd_detect(args):
     d, config = Path(args[0]), AnalysisConfig.load(Path(_opt(args, "config")))
     clusters = _clusters_from(d, config)
     result = DetectionEngine(config.detection, config.baseline).detect(clusters)
-    print(f"profile           : {config.profile.name}")
     print(f"strategy          : {config.segmentation.strategy.value}")
     print(f"episodes evaluated: {result.episodes_evaluated:,}   censored: {result.episodes_censored:,}   "
           f"censor margin: {result.margin_millis:,}ms")
@@ -303,7 +272,7 @@ def _build_report(config, config_path, result: AnalysisResult) -> Report:
                               result.detection.corpus_end)
     config_hash = sha256_hex(Path(config_path).read_bytes())
     return Report(VERSION, datetime.now(timezone.utc), config_hash, fp,
-                  config.profile.name, config.segmentation.strategy.value,
+                  config.segmentation.strategy.value,
                   result.detection.episodes_evaluated, result.detection.episodes_censored,
                   result.detection.margin_millis, len(result.ranking.ranked),
                   result.ranking.suppressed_count, result.ranking.top,
@@ -397,7 +366,7 @@ def cmd_serve(args):
 
 
 COMMANDS = {
-    "parse": cmd_parse, "detect-format": cmd_detect_format, "segment": cmd_segment,
+    "parse": cmd_parse, "segment": cmd_segment,
     "cluster": cmd_cluster, "baseline": cmd_baseline, "detect": cmd_detect,
     "analyze": cmd_analyze, "validate": cmd_validate, "explain": cmd_explain,
     "compare": cmd_compare,
@@ -419,12 +388,6 @@ def main(argv=None):
     try:
         fn(argv[1:])
         return 0
-    except MatchRateError as e:
-        print(f"ABORTED: {e}", file=sys.stderr)
-        for f, ln, text in e.report.failures:
-            print(f"  {Path(f).name}:{ln}  {text[:160]}", file=sys.stderr)
-        print("Fix the profile (try `tfa detect-format <file>`) or lower --threshold.", file=sys.stderr)
-        return 2
     except NotImplementedError as e:
         print(f"unsupported: {e}", file=sys.stderr)
         return 3

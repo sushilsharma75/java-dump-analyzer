@@ -1,120 +1,109 @@
-from datetime import datetime, timezone
-
-from tfa.ingest import (FileSetReader, FormatProfile, MatchRateError, ParseStats,
-                        RecordParser, detect_format)
-
-
-def _reader(d, stats=None):
-    return FileSetReader(d, RecordParser(FormatProfile.default()), stats or ParseStats())
+"""Ingestion is format-agnostic: any text log is read, nothing is ever rejected."""
+from tfa.extract import (call_site_of, level_of, normalise_template,
+                         parse_any_timestamp, thread_of)
+from tfa.ingest import FileSetReader, LineExtractor, ParseStats
 
 
-def _read_all(r):
-    return list(r.records())
+def write(tmp_path, name, text):
+    (tmp_path / name).write_text(text, encoding="utf-8")
 
 
-def test_parses_canonical_envelope():
-    p = RecordParser(FormatProfile.default())
-    env = p.try_match("2026-08-20 10:00:00.123 | INFO | exec-7 | com.acme.OrderService:142 | processing")
-    assert env.ts == "2026-08-20 10:00:00.123"
-    assert env.level == "INFO"
-    assert env.thread == "exec-7"
-    assert env.cls == "com.acme.OrderService"
-    assert env.line == "142"
-    assert env.msg == "processing"
-    rec = p.build(env, [], "app.log", 1, ParseStats())
-    assert rec.call_site() == "com.acme.OrderService:142"
-    assert rec.timestamp == datetime(2026, 8, 20, 10, 0, 0, 123000, tzinfo=timezone.utc)
+def read(tmp_path, stats=None):
+    stats = stats or ParseStats()
+    return list(FileSetReader(tmp_path, stats).records()), stats
 
 
-def test_non_envelope_line_does_not_match():
-    p = RecordParser(FormatProfile.default())
-    assert p.try_match("\tat com.acme.Repo.load(Repo.java:30)") is None
-    assert p.try_match("plain text") is None
+# ------------------------------------------------------------ field extraction
+
+def test_extracts_fields_from_the_canonical_pipe_format():
+    line = ("2026-08-20 10:00:00.123 | INFO | exec-7 | com.acme.OrderService:142 | "
+            "processing [trace_id=abc]")
+    r = LineExtractor().build(line, "f", 1)
+    assert r.timestamp is not None
+    assert r.level == "INFO"
+    assert r.thread_id == "exec-7"
+    assert r.call_site() == "com.acme.OrderService:142"
 
 
-def test_multiline_stack_trace_attaches(tmp_path):
-    (tmp_path / "app.log").write_text(
-        "2026-08-20 10:00:00.100 | INFO | exec-1 | com.acme.Web:10 | begin\n"
-        "2026-08-20 10:00:00.200 | ERROR | exec-1 | com.acme.Repo:30 | boom\n"
-        "java.sql.SQLException: timeout\n"
-        "\tat com.acme.Repo.load(Repo.java:30)\n"
-        "\tat com.acme.Svc.run(Svc.java:20)\n"
-        "2026-08-20 10:00:00.300 | INFO | exec-1 | com.acme.Web:99 | end\n")
-    stats = ParseStats()
-    recs = _read_all(_reader(tmp_path, stats))
+def test_extracts_fields_from_a_completely_different_format():
+    r = LineExtractor().build('{"ts":"2026-01-01T10:00:00Z","level":"ERROR","msg":"boom"}', "f", 1)
+    assert r.timestamp is not None and r.level == "ERROR"
+    # no Class:line in JSON - a message template stands in as the identity
+    assert r.call_site() and "msg" in r.call_site()
+
+
+def test_lines_without_a_timestamp_are_still_records(tmp_path):
+    write(tmp_path, "a.log", "no timestamp at all here\nanother bare line\n")
+    recs, stats = read(tmp_path)
+    assert len(recs) == 2 and stats.without_timestamp == 2
+    assert stats.records == 2          # nothing rejected, no malformed bucket
+
+
+def test_helpers():
+    assert parse_any_timestamp("2026-01-01 10:00:00.100 x") is not None
+    assert parse_any_timestamp("nothing here") is None
+    assert level_of("a WARNING b") == "WARN"
+    assert call_site_of("a Foo:12 b") == "Foo:12"
+    assert thread_of("x | INFO | http-nio-8081-exec-1 | y") == "http-nio-8081-exec-1"
+    assert normalise_template("qty=1") == normalise_template("qty=9999")
+
+
+# --------------------------------------------------------------- record contract
+
+def test_stack_trace_attaches_to_the_record_above(tmp_path):
+    write(tmp_path, "app.log",
+          "2026-08-20 10:00:00.100 | INFO | t | com.acme.Web:10 | begin\n"
+          "2026-08-20 10:00:00.200 | ERROR | t | com.acme.Repo:30 | boom\n"
+          "java.sql.SQLException: timeout\n"
+          "\tat com.acme.Repo.load(Repo.java:30)\n"
+          "2026-08-20 10:00:00.300 | INFO | t | com.acme.Web:99 | end\n")
+    recs, stats = read(tmp_path)
     assert len(recs) == 3
-    assert recs[1].call_site() == "com.acme.Repo:30"
-    assert len(recs[1].continuation_lines) == 3
+    assert len(recs[1].continuation_lines) == 2
     assert recs[1].has_stack_trace()
-    assert stats.matched == 3 and stats.continuation == 3 and stats.malformed == 0
+    assert recs[2].continuation_lines == ()
+    assert stats.continuation == 2
 
 
-def test_malformed_lines_counted(tmp_path):
-    (tmp_path / "app.log").write_text(
-        "### rotated header\ngarbage\n"
-        "2026-08-20 10:00:00.100 | INFO | exec-1 | com.acme.Web:10 | begin\n"
-        "a trailing continuation\n")
-    stats = ParseStats()
-    recs = _read_all(_reader(tmp_path, stats))
-    assert len(recs) == 1
-    assert stats.malformed == 2 and stats.matched == 1 and stats.continuation == 1
+def test_indented_payload_lines_attach_too(tmp_path):
+    write(tmp_path, "a.log", "2026-01-01 10:00:00 start\n    field: value\n")
+    recs, _ = read(tmp_path)
+    assert len(recs) == 1 and recs[0].continuation_lines == ("    field: value",)
 
 
-def test_files_in_timestamp_order_not_filename(tmp_path):
-    (tmp_path / "zzz-first.log").write_text("2026-08-20 09:00:00.000 | INFO | t | com.acme.A:1 | early\n")
-    (tmp_path / "aaa-second.log").write_text("2026-08-20 11:00:00.000 | INFO | t | com.acme.B:2 | late\n")
-    r = _reader(tmp_path)
-    assert r.ordered_files[0].name == "zzz-first.log"
-    recs = _read_all(r)
-    assert recs[0].call_site() == "com.acme.A:1"
-    assert recs[1].call_site() == "com.acme.B:2"
+def test_every_line_is_accounted_for(tmp_path):
+    write(tmp_path, "a.log", "2026-01-01 10:00:00 a\n\tcont\n2026-01-01 10:00:01 b\n")
+    _, stats = read(tmp_path)
+    assert stats.total_lines == stats.records + stats.continuation
 
 
-def test_continuation_split_across_file_boundary(tmp_path):
-    (tmp_path / "part-a.log").write_text(
-        "2026-08-20 10:00:00.100 | ERROR | exec-1 | com.acme.Repo:30 | boom\n"
-        "java.sql.SQLException: timeout\n\tat com.acme.Repo.load(Repo.java:30)\n")
-    (tmp_path / "part-b.log").write_text(
-        "\tat com.acme.Svc.run(Svc.java:20)\n\tat com.acme.Web.handle(Web.java:10)\n"
-        "2026-08-20 10:00:05.000 | INFO | exec-1 | com.acme.Web:99 | end\n")
-    stats = ParseStats()
-    recs = _read_all(_reader(tmp_path, stats))
-    assert len(recs) == 2
-    assert len(recs[0].continuation_lines) == 4
-    assert stats.malformed == 0
+# --------------------------------------------------------------- file ordering
+
+def test_files_ordered_by_timestamp_not_filename(tmp_path):
+    write(tmp_path, "zzz-first.log", "2026-08-20 09:00:00.000 A:1 early\n")
+    write(tmp_path, "aaa-second.log", "2026-08-20 11:00:00.000 B:2 late\n")
+    reader = FileSetReader(tmp_path)
+    assert reader.ordered_files[0].name == "zzz-first.log"
+    recs = list(reader.records())
+    assert recs[0].call_site() == "A:1" and recs[1].call_site() == "B:2"
 
 
-def test_empty_and_nomatch_and_separator(tmp_path):
-    (tmp_path / "empty.log").write_text("")
-    (tmp_path / "junk.log").write_text("not a log\nanother\n")
-    stats = ParseStats()
-    assert _read_all(_reader(tmp_path, stats)) == []
-    assert stats.malformed == 2
-
-    (tmp_path / "sep.log").write_text(
-        "2026-08-20 10:00:00.000 | INFO | t | com.acme.A:1 | payload a=1 | b=2 | c=3\n")
-    recs = _read_all(_reader(tmp_path / "sep.log", ParseStats()))
-    assert recs[0].message == "payload a=1 | b=2 | c=3"
+def test_file_without_any_timestamp_sorts_last(tmp_path):
+    write(tmp_path, "a-noswhen.log", "no time here A:1\n")
+    write(tmp_path, "b-timed.log", "2026-08-20 09:00:00.000 B:2 x\n")
+    assert FileSetReader(tmp_path).ordered_files[-1].name == "a-noswhen.log"
 
 
-def test_match_rate_fails_below_threshold(tmp_path):
-    lines = ["junk %d" % i for i in range(60)]
-    lines += ["2026-08-20 10:00:00.00%d | INFO | t | com.acme.A:1 | ok" % (i % 10) for i in range(40)]
-    (tmp_path / "mixed.log").write_text("\n".join(lines) + "\n")
-    r = _reader(tmp_path)
-    assert r.check_match_rate(1000).rate < 0.95
-    try:
-        r.require_match_rate(1000, 0.95)
-        assert False
-    except MatchRateError as e:
-        assert e.report.failures
+def test_mixed_formats_in_one_folder_all_read(tmp_path):
+    write(tmp_path, "pipe.log", "2026-01-01 10:00:00.100 | INFO | t | A:1 | ok\n")
+    write(tmp_path, "json.log", '{"ts":"2026-01-01T10:00:01.100Z","msg":"ok"}\n')
+    write(tmp_path, "syslog.log", "Jan  1 10:00:02 host app[1]: ok\n")
+    recs, stats = read(tmp_path)
+    assert len(recs) == 3 and stats.records == 3
 
 
-def test_detect_format(tmp_path):
-    f = tmp_path / "app.log"
-    f.write_text("".join(
-        f"2026-08-20 10:00:0{i % 10}.123 | INFO | exec-{i % 4} | com.acme.Svc:{10 + i % 5} | work\n"
-        for i in range(100)))
-    d = detect_format(f)
-    assert d.match_rate > 0.95
-    assert d.profile.timestamp_pattern == "yyyy-MM-dd HH:mm:ss.SSS"
+def test_empty_file_and_blank_lines(tmp_path):
+    write(tmp_path, "empty.log", "")
+    write(tmp_path, "blank.log", "\n\n")
+    recs, _ = read(tmp_path)
+    assert len(recs) == 2      # blank lines are records, not crashes
