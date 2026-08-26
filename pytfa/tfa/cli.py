@@ -31,7 +31,7 @@ Usage:
   tfa analyze  <dir> --config <yaml> [--out <file>] [--suppressions <file>]
   tfa validate <dir> --config <yaml> --ground-truth <file>
   tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
-  tfa compare  <dir> --good <refId> --bad <refId> [--config <yaml>] [--all] [--out <file>]
+  tfa compare  <dir> --good <refId> --bad <refId> [--all] [--out <file>]   (any log format)
   tfa serve [--port 8080]
 """
 
@@ -354,29 +354,21 @@ def cmd_explain(args):
 
 
 def cmd_compare(args):
-    """Compare one known-GOOD reference flow against one known-BAD one."""
-    from .compare import compare_flows, episodes_for_ids, render_comparison
-    from .ingest import FormatProfile
+    """Compare one known-GOOD reference flow against one known-BAD one.
+
+    Format-agnostic: no profile, no config, no match-rate check.
+    """
+    from .compare import compare_flows, read_reference_flows, render_comparison
     d = args[0] if args and not args[0].startswith("--") else None
     good = _opt(args, "good")
     bad = _opt(args, "bad")
     if d is None or not good or not bad:
-        print("usage: tfa compare <dir> --good <refId> --bad <refId> "
-              "[--config <yaml>] [--all] [--out <file>]", file=sys.stderr)
+        print("usage: tfa compare <dir> --good <refId> --bad <refId> [--all] [--out <file>]",
+              file=sys.stderr)
         sys.exit(1)
 
-    cfg_path = _opt(args, "config")
-    if cfg_path:
-        config = AnalysisConfig.load(Path(cfg_path))
-        profile, threshold, sample = config.profile, config.match_threshold, config.sample_lines
-    else:
-        profile, threshold, sample = FormatProfile.default(), 0.95, 1000
-
-    reader = FileSetReader(Path(d), RecordParser(profile), ParseStats())
-    reader.require_match_rate(sample, threshold)
-    good_ep, bad_ep = episodes_for_ids(reader.records(), good, bad)
-    result = compare_flows(good_ep, bad_ep, good, bad)
-
+    good_flow, bad_flow = read_reference_flows(Path(d), good, bad)
+    result = compare_flows(good_flow, bad_flow)
     print(render_comparison(result, show_all="--all" in args), end="")
 
     out = _opt(args, "out")
@@ -384,14 +376,14 @@ def cmd_compare(args):
         import json
         payload = {
             "goodId": result.good_id, "badId": result.bad_id,
-            "goodRecords": result.good.size(), "badRecords": result.bad.size(),
-            "goodDurationMs": result.good_duration_ms, "badDurationMs": result.bad_duration_ms,
+            "goodLines": result.good.size(), "badLines": result.bad.size(),
+            "goodDurationMs": result.good.duration_ms(),
+            "badDurationMs": result.bad.duration_ms(),
             "breakIndex": result.break_index,
-            "steps": [{"kind": s.kind, "callSite": s.call_site,
+            "steps": [{"kind": s.kind, "step": s.label,
                        "fields": [{"key": f.key, "good": f.good, "bad": f.bad, "kind": f.kind}
                                   for f in s.fields]} for s in result.steps],
-            "errorsInBad": [f"{r.timestamp} | {r.level} | {r.call_site()} | {r.message}"
-                            for r in result.errors_only_in_bad],
+            "errorsInBad": [s.raw for s in result.errors_only_in_bad],
         }
         Path(out).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"\n[JSON comparison written to {out}]")

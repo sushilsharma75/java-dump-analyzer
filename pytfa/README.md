@@ -124,8 +124,18 @@ exactly **one known-good and one known-bad reference id**, use `compare` instead
 tfa compare /path/to/logs --good 4f3a9c2e...  --bad 8b1d5f7a...
 ```
 
+No `--config` is needed or used.
+
+**The log format does not matter.** `compare` uses no format profile, no config
+and no match-rate check - it reads raw lines from every file and derives what it
+needs best-effort: the timestamp (several common layouts; file order otherwise),
+the step identity (`Class:line` when present, otherwise a normalised message
+template with values masked), and payload fields (`key=value` and `"key": value`,
+including nested `{a=1, b=2}` blocks). Plain text, JSON lines and syslog-style
+files can even be mixed in the same folder and still stitch into one flow.
+
 Reference ids are matched as **exact whole tokens** (no spaces, no partial
-matches), across every service log file. The report gives:
+matches), across every log file. The report gives:
 
 - **THE BREAK** — the first step where the two flows part company, whether that
   is a different branch or the same step with different data.
