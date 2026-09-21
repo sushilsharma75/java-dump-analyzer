@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """dbdoctor MySQL/MariaDB collector.
 
-Reads performance STATISTICS VIEWS ONLY (performance_schema statement digests,
+Reads performance statistics and optional routine/schema metadata (performance_schema statement digests,
 sys schema advisor views, information_schema.tables/statistics, processlist,
 global variables/status) and writes a normalized snapshot.json for analysis
 by dbdoctor.
 
 PRIVACY — what leaves this machine and what never does:
+  * --include-procedures is OPT-IN: routine source retains original literals,
+    comments and identifiers, which may contain secrets. Review before sharing.
+    The SQL normalization guarantees below apply to query statistics only.
   * Statement text comes from performance_schema DIGEST_TEXT, which the
     server has ALREADY normalized (every literal replaced by '?') before we
-    read it. The only raw SQL this script can see — currently running
-    statements in the processlist — is passed through this script's own
-    literal-stripping pass before anything is written.
+    read it. Currently running statements in the processlist are passed through
+    this script's literal-stripping pass before writing query statistics.
   * Host and database names are hashed to a short alias by default
     (pass --keep-names to keep them readable).
   * The session is opened READ-ONLY (SET SESSION TRANSACTION READ ONLY) and
@@ -440,7 +442,53 @@ def collect_settings(variables: dict[str, str], status: dict[str, str]) -> list[
 # --------------------------------------------------------------------------
 
 
-def collect(dsn: str, keep_names: bool) -> dict:
+def collect_procedures(cur, notes, db=None):
+    """Opt-in source capture: bodies retain literals; never run routine SQL."""
+    cur.execute("""
+        SELECT ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME,
+               CONCAT(ROUTINE_SCHEMA, '.', ROUTINE_NAME), 'sql', ROUTINE_DEFINITION
+        FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = %s
+        ORDER BY ROUTINE_NAME LIMIT 1001
+    """, (db,))
+    rows = cur.fetchall()
+    cur.execute("""
+        SELECT SPECIFIC_SCHEMA, SPECIFIC_NAME, PARAMETER_NAME, DTD_IDENTIFIER
+        FROM information_schema.PARAMETERS WHERE SPECIFIC_SCHEMA = %s
+          AND PARAMETER_NAME IS NOT NULL ORDER BY SPECIFIC_NAME, ORDINAL_POSITION LIMIT 20001
+    """, (db,))
+    parameters = cur.fetchall()
+    cur.execute("""
+        SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_TYPE
+        FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = %s
+        ORDER BY TABLE_NAME, ORDINAL_POSITION LIMIT 20001
+    """, (db,))
+    column_rows = cur.fetchall()
+    if len(rows) > 1000 or len(parameters) > 20000 or len(column_rows) > 20000:
+        notes.append("Procedure/column collection was truncated by record limits; coverage is partial.")
+    params = {}
+    for schema, specific, name, dtype in parameters[:20000]:
+        params.setdefault((schema, specific), []).append({"name": name, "data_type": dtype})
+    procedures = []
+    for schema, name, specific, identity, language, definition in rows[:1000]:
+        if definition and len(definition) > 200000:
+            definition = None
+            notes.append("A procedure body exceeded 200000 characters and was omitted.")
+        if not definition:
+            notes.append("A procedure definition is unavailable; check source visibility/permissions.")
+        routine_params = params.get((schema, specific), [])
+        if len(routine_params) > 1000:
+            routine_params = []
+            notes.append("Procedure parameters omitted because the parameter limit was exceeded.")
+        procedures.append(dict(schema_name=schema, name=name, identity=identity,
+                               language=language, definition=definition, parameters=routine_params))
+    notes.append("Procedure source is opt-in and retains literals/comments; review for secrets before sharing. Catalog visibility may hide routines or columns.")
+    return {"procedures": procedures, "columns": [
+        dict(schema_name=schema, table=table, name=name, data_type=dtype)
+        for schema, table, name, dtype in column_rows[:20000]
+    ]}
+
+
+def collect(dsn: str, keep_names: bool, include_procedures: bool = False) -> dict:
     import pymysql
 
     params = parse_dsn(dsn)
@@ -519,6 +567,12 @@ def collect(dsn: str, keep_names: bool) -> dict:
         "connections": collect_connections(status, variables),
         "settings": collect_settings(variables, status),
     }
+    if include_procedures:
+        try:
+            snapshot.update(collect_procedures(cur, notes, db))
+            capabilities.extend(["procedure_source", "column_types"])
+        except Exception:
+            notes.append("Procedure/column collection failed; source analysis is unavailable. Check catalog permissions and server support.")
     conn.close()
     return snapshot
 
@@ -533,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
         help="DSN mysql://user:pass@host:3306/db (or set env MYSQL_DSN). Credentials "
         "are used for the connection only and never written anywhere.",
     )
+    parser.add_argument("--include-procedures", action="store_true", help="include routine bodies and column types; source may contain sensitive literals")
     parser.add_argument("--out", default="snapshot.json", help="output file path")
     parser.add_argument(
         "--delta-of",
@@ -552,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--dsn or env MYSQL_DSN is required")
 
     try:
-        snapshot = collect(args.dsn, args.keep_names)
+        snapshot = collect(args.dsn, args.keep_names, args.include_procedures)
     except Exception as exc:
         print(f"error: collection failed: {exc}", file=sys.stderr)
         return 1

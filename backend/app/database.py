@@ -34,16 +34,26 @@ def analyze_snapshot(document: dict, baseline: dict | None = None) -> dict:
         snapshot = Snapshot.model_validate(document)
     result = run_all(snapshot).model_dump(mode="json")
     coverage = []
-    for section in ("queries", "tables", "indexes", "sessions", "lock_waits", "connections", "settings"):
+    for section in ("queries", "tables", "indexes", "sessions", "lock_waits", "connections", "settings", "procedures", "columns"):
         value = getattr(snapshot, section)
         recorded = section in recorded_sections and document.get(section) is not None
         status = "available" if value else "empty" if recorded else "missing"
         if section == "queries" and "query_stats" not in snapshot.meta.capabilities:
             status = "unverified" if value else "missing"
+        if section == "procedures" and value and any(
+            not p.definition or p.language.lower() not in {"sql", "plpgsql"} for p in value
+        ):
+            status = "partial"
+        if section in {"procedures", "columns"} and recorded and any(
+            "truncated" in note.lower() or "omitted" in note.lower()
+            for note in snapshot.meta.capability_notes
+        ):
+            status = "partial"
         coverage.append({"section": section, "status": status,
                          "count": len(value) if isinstance(value, list) else int(value is not None)})
     limitations = list(snapshot.meta.capability_notes)
     limitations.extend([
+        "Stored procedure checks are static heuristics for SQL/PLpgSQL bodies, not compilation or measured performance. Dynamic SQL, quoted identifiers, nested query scopes, search_path, collation and control flow are not resolved. Datatype checks require captured column metadata; missing findings do not establish correctness.",
         "Scores rank observed findings; they are not a health guarantee. Empty or missing sections cannot rule out problems.",
         "Query shares use captured top statements, not all database activity. Index suggestions require execution-plan validation.",
         "SQL is supplied by the collector. Review sanitization before sharing exports; this endpoint does not redact uploaded text.",
@@ -59,7 +69,7 @@ def analyze_snapshot(document: dict, baseline: dict | None = None) -> dict:
         **result, "analysis_id": uuid.uuid4().hex,
         "summary": f"{snapshot.meta.engine} · {snapshot.meta.host_alias} · {len(findings)} findings",
         "coverage": coverage, "limitations": limitations,
-        "status": "partial" if any(c["status"] in ("missing", "unverified") for c in coverage) else "analyzed",
+        "status": "partial" if any(c["status"] in ("missing", "unverified", "partial") for c in coverage) else "analyzed",
         "score_label": "Observed findings score (not a health certification)",
         "snapshot": snapshot.model_dump(mode="json"),
         "upstream_revision": UPSTREAM_REVISION,

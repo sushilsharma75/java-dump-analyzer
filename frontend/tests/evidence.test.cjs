@@ -72,3 +72,14 @@ test('Database export escapes SQL and preserves measured evidence', () => {
   for (const text of ['&lt;script&gt;', '1200', 'db-0001', 'Missing statistics']) assert.ok(html.includes(text), text)
   assert.ok(!html.includes('<script>bad</script>'))
 })
+
+test('Stored procedure source evidence and suggestions appear in UI and export', () => {
+  const analysis = { ...database, findings: [{ evidence_id: 'db-0001', rule_id: 'R-SP1',
+    title: 'Compared operands have different declared datatypes', severity: 'MEDIUM',
+    category: 'procedures', confidence: 'medium', affected_object: 'shop.review_orders',
+    evidence: { line: 7, left_type: 'bigint', right_type: 'varchar(20)' },
+    suggested_action: 'Align parameter types and validate the execution plan.' }] }
+  for (const html of [renderToString(React.createElement(DatabaseAnalysis, { analysis })), databaseReportHTML(analysis)]) {
+    for (const text of ['shop.review_orders', 'bigint', 'varchar(20)', 'Align parameter types']) assert.ok(html.includes(text), text)
+  }
+})

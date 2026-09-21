@@ -34,6 +34,7 @@ CATEGORY_CAP: dict[str, int] = {
     "ops": 25,
     "config": 20,
     "maintenance": 15,
+    "procedures": 20,
     "other": 10,
 }
 

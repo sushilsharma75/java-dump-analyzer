@@ -65,6 +65,39 @@ DBDoctor service or database connection is needed.
    in the same incident. Captures more than five minutes apart are rejected.
    Driver/pool stacks provide investigation context, not proof of SQL causality.
 
+Stored procedure/function analysis is available for the existing PostgreSQL,
+MySQL and MariaDB engines. Run the collector with `--include-procedures`, then
+upload its JSON normally. This option captures original routine bodies and column
+types; **routine literals and comments are retained**, so review source for secrets.
+Older snapshots still work but show missing procedure/column coverage.
+Try [the procedure sample](backend/samples/database/mysql_procedures.json).
+
+The `procedures` findings category includes:
+
+- Parameter/local-variable and column datatype differences in simple comparisons,
+  including length, numeric precision/scale and MySQL signedness.
+- Temporary-column differences in joins and explicit-column `INSERT … SELECT`.
+- Temporary tables used in joins/filters/sorts without an explicit index.
+- Cursor/loop processing, `SELECT *`, dynamic SQL requiring separate review, and
+  functions applied to predicate columns.
+
+Each finding includes source line evidence, confidence and a suggested action.
+These are static review candidates: validate plans, representative row counts and
+runtime before changing SQL or adding indexes. This does not compile procedures,
+prove invalid variable definitions, infer all temporary-table types, analyse dynamic
+SQL strings, resolve quoted identifiers/CTEs/nested scopes, or detect parameter
+sniffing, collation effects and runtime blocking. Unsupported languages and missing
+bodies show partial coverage; catalog permissions can also hide entire routines.
+
+For manually prepared snapshots, add `procedures` (schema_name, name, definition,
+optional language/identity/parameters) and `columns` (schema_name, table, name,
+data_type). Definitions must be routine **bodies**, excluding CREATE wrappers;
+parameters use `{ "name": "p_id", "data_type": "bigint" }`. The sample demonstrates
+this contract. PostgreSQL parameter typmods may be absent in catalog metadata;
+local declarations and column definitions retain captured precision/length.
+Collector catalog references: [PostgreSQL pg_proc](https://www.postgresql.org/docs/16/catalog-pg-proc.html)
+and [MySQL ROUTINES](https://dev.mysql.com/doc/refman/8.4/en/information-schema-routines-table.html).
+
 Database snapshots retain collector-supplied text in `ANALYSIS_DIR`. No database
 credentials are requested by the workbench. No recommendations are automatically
 executed. Baseline rates may be uncertain after resets or digest eviction, and

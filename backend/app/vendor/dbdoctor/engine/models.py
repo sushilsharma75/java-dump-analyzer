@@ -284,9 +284,32 @@ class ConfigSetting(BaseModel):
     )
 
 
+class ColumnDefinition(BaseModel):
+    schema_name: str
+    table: str
+    name: str
+    data_type: str = Field(min_length=1, max_length=256)
+
+
+class RoutineParameter(BaseModel):
+    name: str
+    data_type: str = Field(min_length=1, max_length=256)
+
+
+class StoredProcedure(BaseModel):
+    schema_name: str
+    name: str
+    identity: str | None = None
+    language: str = "sql"
+    definition: str | None = Field(default=None, max_length=200000)
+    parameters: list[RoutineParameter] = Field(default_factory=list, max_length=1000)
+
+
 class Snapshot(BaseModel):
     """Root document: one normalized collection run from one database."""
 
+    procedures: list[StoredProcedure] = Field(default_factory=list, max_length=1000)
+    columns: list[ColumnDefinition] = Field(default_factory=list, max_length=20000)
     meta: SnapshotMeta = Field(description="Provenance + capabilities. Both engines.")
     queries: list[QueryStat] = Field(
         default_factory=list, max_length=1000,

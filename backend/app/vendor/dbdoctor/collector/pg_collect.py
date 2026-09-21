@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """dbdoctor PostgreSQL collector.
 
-Reads performance STATISTICS VIEWS ONLY (pg_stat_statements, pg_stat_activity,
+Reads performance statistics and optional routine/schema metadata (pg_stat_statements, pg_stat_activity,
 pg_stat_user_tables, pg_stat_user_indexes, pg_settings, pg_locks) and writes a
 normalized snapshot.json for analysis by dbdoctor.
 
 PRIVACY — what leaves this machine and what never does:
+  * --include-procedures is OPT-IN: routine source retains original literals,
+    comments and identifiers, which may contain secrets. Review before sharing.
+    The SQL normalization guarantees below apply to query statistics only.
   * SQL text is normalized: every string and numeric literal is replaced
     with '?' BEFORE it is written to the output file. pg_stat_statements
     already stores normalized statements; this script adds a second,
-    defense-in-depth stripping pass of its own. No literal values, no row
-    data, and no credentials are ever written to the snapshot.
+    defense-in-depth stripping pass of its own. No table row data is collected.
   * Host and database names are hashed to a short alias by default
     (pass --keep-names to keep them readable).
   * The session is opened READ-ONLY (default_transaction_read_only=on) and
@@ -341,7 +343,62 @@ def check_capabilities(cur) -> tuple[list[str], list[str]]:
 # --------------------------------------------------------------------------
 
 
-def collect(dsn: str, keep_names: bool) -> dict:
+def collect_procedures(cur, notes, db=None):
+    """Opt-in source capture: bodies retain literals; never run routine SQL."""
+    cur.execute("""
+        SELECT n.nspname, p.proname, p.proname || '_' || p.oid,
+               p.oid::regprocedure::text, l.lanname, p.prosrc
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_language l ON l.oid = p.prolang
+        WHERE p.prokind IN ('p', 'f') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg_toast%%'
+        ORDER BY n.nspname, p.proname, p.oid LIMIT 1001
+    """)
+    rows = cur.fetchall()
+    cur.execute("""
+        SELECT specific_schema, specific_name, parameter_name, udt_name
+        FROM information_schema.parameters
+        WHERE specific_schema NOT IN ('pg_catalog', 'information_schema')
+          AND parameter_name IS NOT NULL ORDER BY specific_schema, specific_name, ordinal_position
+        LIMIT 20001
+    """)
+    parameters = cur.fetchall()
+    cur.execute("""
+        SELECT n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod)
+        FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg_toast%%'
+        ORDER BY n.nspname, c.relname, a.attnum LIMIT 20001
+    """)
+    column_rows = cur.fetchall()
+    if len(rows) > 1000 or len(parameters) > 20000 or len(column_rows) > 20000:
+        notes.append("Procedure/column collection was truncated by record limits; coverage is partial.")
+    params = {}
+    for schema, specific, name, dtype in parameters[:20000]:
+        params.setdefault((schema, specific), []).append({"name": name, "data_type": dtype})
+    procedures = []
+    for schema, name, specific, identity, language, definition in rows[:1000]:
+        if definition and len(definition) > 200000:
+            definition = None
+            notes.append("A procedure body exceeded 200000 characters and was omitted.")
+        if not definition:
+            notes.append("A procedure definition is unavailable; check source visibility/permissions.")
+        routine_params = params.get((schema, specific), [])
+        if len(routine_params) > 1000:
+            routine_params = []
+            notes.append("Procedure parameters omitted because the parameter limit was exceeded.")
+        procedures.append(dict(schema_name=schema, name=name, identity=identity,
+                               language=language, definition=definition, parameters=routine_params))
+    notes.append("Procedure source is opt-in and retains literals/comments; review for secrets before sharing. Catalog visibility may hide routines or columns.")
+    return {"procedures": procedures, "columns": [
+        dict(schema_name=schema, table=table, name=name, data_type=dtype)
+        for schema, table, name, dtype in column_rows[:20000]
+    ]}
+
+
+def collect(dsn: str, keep_names: bool, include_procedures: bool = False) -> dict:
     import psycopg
 
     conn = psycopg.connect(
@@ -385,6 +442,12 @@ def collect(dsn: str, keep_names: bool) -> dict:
             "connections": collect_connections(cur),
             "settings": collect_settings(cur),
         }
+        if include_procedures:
+            try:
+                snapshot.update(collect_procedures(cur, notes))
+                capabilities.extend(["procedure_source", "column_types"])
+            except Exception:
+                notes.append("Procedure/column collection failed; source analysis is unavailable. Check catalog permissions and server support.")
     conn.close()
     return snapshot
 
@@ -399,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
         help="PostgreSQL DSN (or set env PGDSN). Credentials are used for the "
         "connection only and never written anywhere.",
     )
+    parser.add_argument("--include-procedures", action="store_true", help="include routine bodies and column types; source may contain sensitive literals")
     parser.add_argument("--out", default="snapshot.json", help="output file path")
     parser.add_argument(
         "--delta-of",
@@ -420,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--dsn or env PGDSN is required")
 
     try:
-        snapshot = collect(args.dsn, args.keep_names)
+        snapshot = collect(args.dsn, args.keep_names, args.include_procedures)
     except Exception as exc:  # connection/permission problems: fail with a clear message
         print(f"error: collection failed: {exc}", file=sys.stderr)
         return 1

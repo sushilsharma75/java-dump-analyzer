@@ -17,7 +17,7 @@ from app.vendor.dbdoctor.engine.models import EngineName, Snapshot
 
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 Confidence = Literal["high", "medium", "low"]
-Category = Literal["queries", "indexes", "ops", "maintenance", "config", "other"]
+Category = Literal["queries", "indexes", "ops", "maintenance", "config", "procedures", "other"]
 
 SEVERITY_RANK: dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 

@@ -31,7 +31,8 @@ export function DatabaseUpload({ onUpload, loading }) {
     <details className="mt-4 text-sm text-bone-400"><summary>Collect a database snapshot</summary>
       <p className="mt-3">Run a collector inside your database environment with a read-only account. Use its --help for connection and output options. This workbench does not connect to your database.</p>
       <div className="flex gap-4 my-3"><a className="underline" href="/api/database/collectors/pg_collect.py">PostgreSQL collector</a><a className="underline" href="/api/database/collectors/mysql_collect.py">MySQL / MariaDB collector</a><a className="underline" href="/api/database/collectors/delta.py">Delta helper</a></div>
-      <p>Python collectors require psycopg[binary] or PyMySQL respectively. Place delta.py alongside the collector for --delta-of. Review SQL sanitization before sharing snapshot files.</p>
+      <p>Python collectors require psycopg[binary] or PyMySQL respectively. Place delta.py alongside the collector for --delta-of. Review SQL sanitization before sharing snapshot files. Add --include-procedures to capture stored procedure/function bodies and column datatypes. This opt-in source capture retains literals and comments; review it for secrets before sharing.</p>
+      <p className="mt-3">Stored procedure analysis checks parameter/local-variable and temporary-column datatype mismatches in simple comparisons, unindexed temporary-table access, cursors/loops, SELECT *, dynamic SQL, and functions on predicate columns. Findings include review suggestions; execution plans are needed to confirm performance impact.</p>
     </details>
   </section>
 }
@@ -75,7 +76,7 @@ export default function DatabaseAnalysis({ analysis, threadAnalysis }) {
       {findings.map(f => <article key={f.evidence_id} className="border-t border-ink-600 py-5">
         <h3 className="text-lg text-bone-100">{f.severity} · {f.title}</h3><p className="text-xs text-bone-400 my-2">{f.evidence_id} · {f.rule_id} · confidence: {f.confidence}</p>
         <pre className="whitespace-pre-wrap break-all text-sm">{f.affected_object}</pre>
-        <details className="my-3"><summary>Measured evidence</summary><pre className="overflow-auto text-xs mt-2">{JSON.stringify(f.evidence, null, 2)}</pre></details><p className="text-sm">{f.suggested_action}</p>
+        <details className="my-3"><summary>Evidence</summary><pre className="overflow-auto text-xs mt-2">{JSON.stringify(f.evidence, null, 2)}</pre></details><p className="text-sm">{f.suggested_action}</p>
       </article>)}
     </section>
     <details className="panel p-6"><summary>Complete snapshot and analysis</summary><pre className="overflow-auto text-xs mt-3">{JSON.stringify(analysis, null, 2)}</pre></details>
