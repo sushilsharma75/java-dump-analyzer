@@ -40,7 +40,7 @@ STATE_LINE_RE = re.compile(
 #   at java.lang.Object.wait(java.base@17.0.6/Native Method)
 #   at sun.misc.Unsafe.park(Native Method)
 FRAME_RE = re.compile(
-    r'^\s*at\s+(?P<fqcn>[\w$.<>]+)\.(?P<method>[\w$<>]+)'
+    r'^\s*at\s+(?:(?P<prefix>[^\s(]+?)/)?(?P<fqcn>[\w$.<>/]+)\.(?P<method>[\w$<>]+)'
     r'(?:\((?:[^@)]+@[\w.+]+/)?(?P<file>[^:)]+?)(?::(?P<line>\d+))?\))?\s*$'
 )
 
@@ -225,6 +225,8 @@ def _parse_thread_block(lines: List[str], start: int) -> Tuple[Optional[ThreadIn
             i += 1
             continue
 
+        if (line.startswith('"') and THREAD_HEADER_RE.match(line)) or DEADLOCK_HEADER_RE.match(line):
+            break
         raw_lines.append(line)
 
         # State line
@@ -271,8 +273,17 @@ def _parse_thread_block(lines: List[str], start: int) -> Tuple[Optional[ThreadIn
         if fm:
             file_name = fm.group("file")
             is_native = file_name == "Native Method"
+            prefix = fm.group("prefix") or ""
+            fqcn = fm.group("fqcn")
+            # Module and loader prefixes may contain one or two slash separators.
+            if "/" in fqcn:
+                extra, fqcn = fqcn.rsplit("/", 1)
+                prefix += "/" + extra
+            parts = prefix.split("/")
             thread.stack.append(StackFrame(
-                class_name=fm.group("fqcn"),
+                class_name=fqcn,
+                module=parts[-1] or None,
+                class_loader=parts[0] if len(parts) > 1 else None,
                 method=fm.group("method"),
                 file=None if is_native else file_name,
                 line=int(fm.group("line")) if fm.group("line") else None,

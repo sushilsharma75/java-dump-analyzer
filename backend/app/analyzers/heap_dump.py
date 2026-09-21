@@ -107,6 +107,7 @@ class _Reader:
         self._buf = b""
         self._buf_pos = 0
         self._buf_size = buf_size
+        self.incomplete = False
         self.pos = 0  # absolute byte position in the underlying stream
 
     def _ensure(self, n: int) -> None:
@@ -212,6 +213,7 @@ def parse_heap_dump(
     progress_interval_records: int = 5000,
     source=None,
     trace_graph: bool = True,
+    index_path=None,
 ) -> HeapDumpAnalysis:
     """
     Stream-parse an .hprof file.
@@ -322,8 +324,11 @@ def parse_heap_dump(
             _ = reader.u4()  # timestamp delta (ignored)
             length = reader.u4()
         except struct.error:
+            reader.incomplete = True
             break
 
+        if file_size and reader.pos + length > file_size:
+            raise ValueError("Truncated HPROF record payload")
         total_records += 1
         record_type_counts[TAG_NAMES.get(tag, f"UNKNOWN_{tag:02x}")] += 1
 
@@ -438,8 +443,23 @@ def parse_heap_dump(
 
     # --- Findings ---
     analyzed_bytes = stopped_early_at if stopped_early_at is not None else reader.pos
-    truncated = bool(max_bytes and file_size and analyzed_bytes < file_size)
+    truncated = bool(reader.incomplete or (file_size and analyzed_bytes < file_size))
     skipped: List[SkippedAnalysis] = []
+    from ..schemas import AnalysisStage
+    stages = []
+    stages.append(AnalysisStage(stage="histogram", status="partial" if truncated else "completed"))
+    indexed = False
+    if index_path and not truncated:
+        try:
+            from .heap_index import build_index
+            build_index(fp, index_path)
+            indexed = True
+            stages.append(AnalysisStage(stage="object index", status="completed"))
+        except Exception as e:
+            stages.append(AnalysisStage(stage="object index", status="failed", reason=str(e)))
+            skipped.append(SkippedAnalysis(stage="object index", status="failed", reason=str(e)))
+    else:
+        stages.append(AnalysisStage(stage="object index", status="skipped", reason="Partial input or no persistent index requested"))
 
     findings = _build_heap_findings(histogram_by_count, histogram_by_size, total_instances, file_size)
 
@@ -473,8 +493,8 @@ def parse_heap_dump(
                 if rf:
                     findings = [f for f in findings if f.title != "No obvious red flags"]
                     findings.insert(0, rf)
-            except Exception:
-                pass  # best-effort; histogram + other findings still stand
+            except Exception as e:
+                skipped.append(SkippedAnalysis(stage="retention tracing (what holds the top consumer)", status="failed", reason=str(e)))
 
     # Wasteful-memory detection (duplicate arrays). Bounded second pass, gated by
     # file size and toggleable via HEAP_WASTE_TRACE=0; never breaks the histogram.
@@ -484,7 +504,18 @@ def parse_heap_dump(
                               truncated=truncated, file_size=file_size,
                               limit=_waste_max_bytes(), seekable=_seekable(fp),
                               env_hint="HEAP_WASTE_MAX_BYTES")
-    if waste_gate:
+    if indexed and os.environ.get("HEAP_WASTE_TRACE", "1") != "0":
+        try:
+            from .heap_index import duplicate_arrays
+            duplicates = duplicate_arrays(index_path)
+            wasted_bytes = duplicates["potential_duplicate_bytes"]
+            if wasted_bytes:
+                findings.append(Finding(severity=Severity.INFO, category="memory", title=f"Duplicate array contents: {_fmt_bytes(wasted_bytes)} potential savings",
+                    description=duplicates["limitation"], conclusion="observation", confidence="medium",
+                    evidence=[f"{g['copies']} copies; example object {g['example']}" for g in duplicates["groups"]]))
+        except Exception as e:
+            skipped.append(SkippedAnalysis(stage="duplicate-string / duplicate-buffer scan", status="failed", reason=str(e)))
+    elif waste_gate:
         skipped.append(waste_gate)
     else:
         try:
@@ -494,8 +525,8 @@ def parse_heap_dump(
             if waste_findings:
                 findings = [f for f in findings if f.title != "No obvious red flags"]
                 findings.extend(waste_findings)
-        except Exception:
-            pass  # best-effort
+        except Exception as e:
+            skipped.append(SkippedAnalysis(stage="duplicate-string / duplicate-buffer scan", status="failed", reason=str(e)))
 
     # Dominator tree → exact retained sizes (the Eclipse-MAT-core number), leak
     # suspects, and unreachable-object accounting. Memory scales with the object
@@ -507,14 +538,14 @@ def parse_heap_dump(
     dom_gate = _gate_reason("dominator tree (exact retained sizes, leak suspects, "
                             "unreachable-object accounting)",
                             enabled=True, truncated=truncated, file_size=file_size,
-                            limit=dominator_max_bytes(), seekable=_seekable(fp),
+                            limit=(file_size + 1 if indexed and os.environ.get("HEAP_DISK_DOMINATORS", "1") == "1" and dominator_max_bytes() > 0 else dominator_max_bytes()), seekable=_seekable(fp),
                             env_hint="HEAP_DOMINATOR_MAX_BYTES")
     if dom_gate:
         skipped.append(dom_gate)
     else:
         try:
             from .heap_dominators import compute_retained
-            rr = compute_retained(fp, model=model)
+            rr = compute_retained(fp, model=model, index_path=index_path if indexed else None, source=source)
             dominator_entries = rr.entries
             reachable_bytes = rr.reachable_bytes
             unreachable_instances = rr.unreachable_count
@@ -526,7 +557,7 @@ def parse_heap_dump(
             if os.environ.get("HEAP_DEPLOY_STRICT"):
                 raise
             skipped.append(SkippedAnalysis(
-                stage="dominator tree (exact retained sizes)",
+                stage="dominator tree (exact retained sizes)", status="failed",
                 reason="the graph pass failed on this dump; the histogram and "
                        "static-field findings below are unaffected",
             ))
@@ -550,7 +581,7 @@ def parse_heap_dump(
     except Exception:
         if os.environ.get("HEAP_DEPLOY_STRICT"):
             raise
-        pass  # never let attribution break the histogram
+        skipped.append(SkippedAnalysis(stage="deployment attribution", status="failed", reason="Deployment graph analysis failed"))
 
     # Say plainly when the numbers describe only part of the dump, or when the
     # deep stages didn't run — otherwise a partial analysis reads like a complete
@@ -564,7 +595,22 @@ def parse_heap_dump(
                                   findings, truncated=truncated,
                                   analyzed_bytes=analyzed_bytes)
 
+    from .evidence import stamp
+    import uuid
+    from datetime import datetime, timezone
+    try:
+        captured_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat() if timestamp_ms else None
+    except (ValueError, OverflowError, OSError):
+        captured_at = None
+    for name in ("retention tracing (what holds the top consumer)", "duplicate-string / duplicate-buffer scan", "dominator tree (exact retained sizes, leak suspects, unreachable-object accounting)", "deployment attribution"):
+        failure = next((x for x in skipped if x.stage == name or (name.startswith("dominator") and x.stage.startswith("dominator"))), None)
+        stages.append(AnalysisStage(stage=name, status=failure.status if failure else ("partial" if (name.startswith("retention") or (name.startswith("duplicate-string") and not indexed)) else "completed"), reason=failure.reason if failure else ("Bounded heuristic/sample, not exhaustive" if (name.startswith("retention") or (name.startswith("duplicate-string") and not indexed)) else None)))
+    stamp(findings)
     return HeapDumpAnalysis(
+        analysis_id=uuid.uuid4().hex, capture={"captured_at": captured_at},
+        stages=stages, histogram=histogram_by_size, histogram_complete=not truncated,
+        source_provenance=source.provenance if source else {},
+        sizing_assumptions=["Object layout is assumed, not measured; dump size does not establish JVM maximum heap.", "Field packing and class object overhead may differ from the modeled sizes."],
         header=header,
         identifier_size=id_size,
         timestamp_ms=timestamp_ms,
@@ -1026,6 +1072,7 @@ def _scan_heap_segment(
             pos += need
 
         else:
+            reader.incomplete = True
             # Unknown sub-tag — abandon the rest of this segment safely
             pos = len(buf)
             if remaining > 0:
@@ -1155,7 +1202,7 @@ def _attach_references(source, entries) -> None:
                 line=r["line"],
                 method=r.get("method"),
                 kind=r.get("kind", "type-use"),
-                snippet=SourceSnippet(**snip) if snip else None,
+                snippet=(snip if isinstance(snip, SourceSnippet) else SourceSnippet(**snip)) if snip else None,
             ))
 
 

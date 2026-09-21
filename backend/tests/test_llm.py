@@ -140,3 +140,15 @@ def test_model_override_is_sent(monkeypatch):
     assert out == "ok"
     assert seen["model"] == "claude-sonnet-5"
     assert seen["thinking"] == {"type": "adaptive"}
+
+
+def test_generated_report_must_cite_existing_evidence(monkeypatch):
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, *args, **kwargs):
+            return _resp(200, {'content':[{'type':'text','text':'A definite leak [E-invented].'}]})
+    monkeypatch.setattr(llm.httpx, 'AsyncClient', lambda **kwargs: Client())
+    import pytest
+    with pytest.raises(llm.LLMRequestError, match='evidence'):
+        asyncio.run(llm.generate_llm_summary({'findings':[{'evidence_id':'E-real','title':'Hypothesis'}]},'heap','test'))

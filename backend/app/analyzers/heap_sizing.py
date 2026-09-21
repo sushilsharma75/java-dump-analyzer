@@ -1,37 +1,14 @@
-"""Shallow-size model — how many bytes an object actually occupies in the JVM.
+"""Assumed shallow-size layouts shared by histogram and retention analysis.
 
-hprof does not record object headers or alignment. An INSTANCE_DUMP carries only
-the packed field values, and every object reference inside them is written at the
-dump's *identifier size* (8 bytes on any 64-bit JVM) regardless of how wide that
-reference is in the running heap. A shallow size read straight off the record is
-therefore wrong twice over: it misses the header, and — whenever compressed oops
-are in play — it over-counts every reference field by 4 bytes.
-
-This module reconstructs what HotSpot actually allocated:
-
-    instance       align(object_header + payload - (id_size - oop) * n_refs)
-    object array   align(array_header  + n * oop)
-    prim array     align(array_header  + n * element_size)
-
-Compressed oops (12-byte object header, 16-byte array header, 4-byte references)
-are the default on every 64-bit HotSpot up to a 32GB max heap, so a dump below
-that size is assumed compressed and anything above it falls back to the 16/24/8
-layout. A 4-byte identifier size means a 32-bit JVM (8/12/4).
-
-The assumption is never silent: `SizeModel.name` is reported on the analysis so
-the reader knows which layout produced the numbers, and `HEAP_OOPS` overrides it
-(`compressed` | `uncompressed` | `auto`, the default).
+HPROF IDs are not the JVM reference width. Headers, field padding, alignment and
+compressed-reference settings are not fully recoverable from dump file size.
+The default for 8-byte IDs is a compressed-reference assumption; HEAP_OOPS can
+override it. This is not a universal exact JVM object-size model.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-
-# HotSpot disables compressed oops once the max heap passes ~32GB. A dump file
-# bigger than that cannot have come from a smaller heap, so it is the one signal
-# the format actually gives us.
-COMPRESSED_OOPS_HEAP_LIMIT = 32 * 1024 * 1024 * 1024
-
 
 @dataclass(frozen=True)
 class SizeModel:
@@ -77,7 +54,7 @@ def size_model(id_size: int = 8, heap_bytes: int = 0) -> SizeModel:
 
     Args:
         id_size: identifier size from the hprof header (4 or 8).
-        heap_bytes: dump file size, used as the proxy for max heap.
+        heap_bytes: retained for API compatibility; never used to infer JVM layout.
     """
     override = (os.environ.get("HEAP_OOPS") or "auto").strip().lower()
     if override in ("compressed", "compressed_oops", "on"):
@@ -87,6 +64,4 @@ def size_model(id_size: int = 8, heap_bytes: int = 0) -> SizeModel:
 
     if id_size == 4:
         return THIRTY_TWO_BIT
-    if heap_bytes and heap_bytes > COMPRESSED_OOPS_HEAP_LIMIT:
-        return UNCOMPRESSED
     return COMPRESSED

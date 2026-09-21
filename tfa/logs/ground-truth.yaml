@@ -1,0 +1,35 @@
+# Known defects injected into this synthetic corpus.
+# Used by `tfa validate` (charter Phase 7) to confirm each defect
+# appears in the top 20 ranked findings.
+
+defects:
+  - id: DEFECT-1-TRUNCATION
+    type: TRUNCATION
+    flow: ORDER
+    threadId: "http-nio-8080-exec-90"
+    orderId: "ORD-14601"
+    approxTimestamp: "2026-08-21 10:17:00.000"
+    expectedDivergenceCallSite: "com.bank.order.InventoryClient:112"
+    description: >
+      Order flow calls InventoryClient, inventory service times out, flow never reaches PaymentClient or the terminal log line. Should surface as a TRUNCATION finding.
+
+  - id: DEFECT-2-DIVERGENCE
+    type: DIVERGENCE
+    flow: PAYMENT
+    threadId: "http-nio-8080-exec-91"
+    orderId: "PAY-14602"
+    approxTimestamp: "2026-08-21 14:42:00.107"
+    expectedDivergenceCallSite: "com.bank.payment.PaymentGateway:203"
+    description: >
+      Payment flow goes straight from PaymentService:64 to PaymentGateway:203, skipping FraudCheckClient:41 entirely. The gateway charge is logged with no fraud-check log line preceding it -- a silent skip, no ERROR level involved. Should surface as a DIVERGENCE finding at PaymentGateway:203.
+
+  - id: DEFECT-3-TIMING
+    type: TIMING
+    flow: LOGIN
+    threadId: "http-nio-8080-exec-92"
+    orderId: "LOG-14603"
+    approxTimestamp: "2026-08-21 16:05:00.000"
+    expectedDivergenceCallSite: "com.bank.auth.SessionManager:33"
+    description: >
+      Login flow: AuthService:55 to SessionManager:33 transition takes ~45s instead of the usual <100ms (looks like an LDAP hang). Should surface as a TIMING finding on that transition.
+

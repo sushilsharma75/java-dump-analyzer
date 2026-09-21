@@ -321,3 +321,22 @@ tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
 | `tfa analyze` | Full pipeline → ranked report (text + JSON) |
 | `tfa validate` | Check findings against ground truth |
 | `tfa explain` | Full reasoning trail for one episode |
+| `tfa serve` | Local web UI: run the pipeline and view the report |
+
+## Local web UI
+
+```bash
+tfa serve                 # then open http://127.0.0.1:8080
+tfa serve --port 9000
+```
+
+A single-page runner (bound to loopback only): type the **absolute path** of a
+log folder on this machine, paste/edit the config YAML, pick which steps to run,
+and hit **Run**. Each step's full output is offered as a **downloadable file**,
+and after `analyze` the **ranked report renders inline** (same cards as
+`report-viewer.html`). Nothing is uploaded — the server shells out to this same
+jar locally and reads only the folder you name. There is no authentication, so
+run it only on a machine you control.
+
+`report-viewer.html` is the standalone alternative: it needs no server — just
+open it and load a `report.json` you already produced with `tfa analyze --out`.

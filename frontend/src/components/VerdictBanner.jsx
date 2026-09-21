@@ -3,6 +3,8 @@
  * Answers "is this JVM healthy?" before any detail.
  */
 const VERDICTS = {
+  insufficient_evidence: { badge: "badge-warning", border: "border-flag-warning/40", bg: "bg-flag-warning/5", dot: "bg-flag-warning", title: "Insufficient evidence", text: "Review capture coverage and compatibility before drawing a conclusion." },
+  invalid: { badge: "badge-warning", title: "Invalid or unsupported input", text: "No usable analysis was produced." },
   critical: {
     badge: 'badge-critical',
     border: 'border-flag-critical/40',
@@ -24,13 +26,13 @@ const VERDICTS = {
     border: 'border-flag-ok/30',
     bg: 'bg-flag-ok/[0.03]',
     dot: 'bg-flag-ok',
-    title: 'Looks healthy',
+    title: 'No major findings in analyzed evidence',
     text: 'No deadlocks, contention, or leak signatures detected in this snapshot.',
   },
 }
 
 export default function VerdictBanner({ verdict, summary }) {
-  const v = VERDICTS[verdict] || VERDICTS.healthy
+  const v = VERDICTS[verdict] || VERDICTS.insufficient_evidence
   return (
     <div className={`panel ${v.border} ${v.bg} p-5 md:p-6 animate-fade-in`}>
       <div className="flex items-start gap-4">

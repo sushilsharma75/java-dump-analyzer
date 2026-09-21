@@ -1,3 +1,4 @@
+import Investigation from './Investigation'
 import { useState } from 'react'
 import Findings from './Findings'
 import LLMPanel from './LLMPanel'
@@ -18,14 +19,15 @@ function fmtTimestamp(ms) {
 // thousands of classes; the top few are the investigation, the rest are noise.
 export const TOP_N = 10
 
-export default function HeapAnalysis({ analysis, filename }) {
+export default function HeapAnalysis({ analysis, filename, sourceSession, onUpdate }) {
   return (
     <div className="max-w-7xl mx-auto pt-8 space-y-8">
       <VerdictBanner verdict={analysis.verdict} summary={analysis.summary} />
+      <Investigation analysis={analysis} sourceSession={sourceSession} onUpdate={onUpdate} />
       <Coverage analysis={analysis} />
       <CaseFile analysis={analysis} filename={filename} />
       <Stats analysis={analysis} />
-      <ExportReport analysis={analysis} filename={filename} kind="heap" />
+      <ExportReport analysis={analysis} filename={filename} kind="heap" sourceSession={sourceSession} />
 
       <Section label="// diagnostic findings" count={analysis.findings.length}>
         <Findings findings={analysis.findings} />
@@ -55,7 +57,7 @@ export default function HeapAnalysis({ analysis, filename }) {
         </Section>
       )}
 
-      <LLMPanel analysis={analysis} kind="heap" />
+      <LLMPanel analysis={analysis} kind="heap" sourceSession={sourceSession} />
 
       <Section
         label={`// histogram · top ${TOP_N} classes by shallow size`}
@@ -378,7 +380,7 @@ function Dominators({ analysis }) {
       </div>
       <div className="panel overflow-hidden">
         <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-5 py-3 border-b border-ink-600/60 label">
-          <span>object · exact retained size, not shallow</span>
+          <span>object · retained size under the selected layout model</span>
           <span className="text-right w-24">retained</span>
           <span className="text-right w-16">% heap</span>
           <span className="text-right w-24">shallow</span>

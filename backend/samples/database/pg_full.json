@@ -1,0 +1,712 @@
+{
+  "meta": {
+    "engine": "postgres",
+    "version": "0.1.0",
+    "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+    "collected_at": "2026-07-05T13:01:50.380427+00:00",
+    "host_alias": "4f04f69d57bd",
+    "is_delta": false,
+    "delta_interval_seconds": null,
+    "db_size_bytes": 1122549095,
+    "capabilities": [
+      "table_stats",
+      "index_stats",
+      "lock_waits",
+      "sessions",
+      "config",
+      "query_stats",
+      "io_timing"
+    ],
+    "capability_notes": []
+  },
+  "queries": [
+    {
+      "query_digest": "4378614815602751461",
+      "normalized_sql": "SELECT id, status, total_cents FROM orders WHERE customer_id = ?",
+      "calls": 3108,
+      "total_time_ms": 177949.365,
+      "mean_time_ms": 57.255,
+      "rows_returned": 6398,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "440101247839410938",
+      "normalized_sql": "SELECT pg_sleep(?)",
+      "calls": 6,
+      "total_time_ms": 48045.968,
+      "mean_time_ms": 8007.661,
+      "rows_returned": 6,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "2162601281382324012",
+      "normalized_sql": "SELECT id, user_id, kind FROM events ORDER BY id LIMIT ? OFFSET ?",
+      "calls": 3228,
+      "total_time_ms": 47534.705,
+      "mean_time_ms": 14.726,
+      "rows_returned": 64560,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-1643289950823613793",
+      "normalized_sql": "UPDATE users SET name = ? WHERE id = ?",
+      "calls": 12,
+      "total_time_ms": 42050.712,
+      "mean_time_ms": 3504.226,
+      "rows_returned": 12,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-2719259441909102186",
+      "normalized_sql": "SELECT id, status, total_cents FROM orders WHERE customer_id = ?",
+      "calls": 120,
+      "total_time_ms": 6759.185,
+      "mean_time_ms": 56.327,
+      "rows_returned": 228,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "3278301018262029997",
+      "normalized_sql": "SELECT id, email FROM users WHERE id = ?",
+      "calls": 31226,
+      "total_time_ms": 2170.826,
+      "mean_time_ms": 0.07,
+      "rows_returned": 31226,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-7843470278038126227",
+      "normalized_sql": "ANALYZE",
+      "calls": 1,
+      "total_time_ms": 856.512,
+      "mean_time_ms": 856.512,
+      "rows_returned": 0,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "5026988254128095876",
+      "normalized_sql": "SELECT product_id, quantity, price_cents FROM order_items WHERE order_id = ?",
+      "calls": 64560,
+      "total_time_ms": 525.278,
+      "mean_time_ms": 0.008,
+      "rows_returned": 112980,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "5835254501026160435",
+      "normalized_sql": "SELECT id FROM orders WHERE id > ? ORDER BY id LIMIT ?",
+      "calls": 3228,
+      "total_time_ms": 127.941,
+      "mean_time_ms": 0.04,
+      "rows_returned": 64560,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "2467828691152787509",
+      "normalized_sql": "SELECT id, email FROM users WHERE id = ?",
+      "calls": 1054,
+      "total_time_ms": 73.03,
+      "mean_time_ms": 0.069,
+      "rows_returned": 1054,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-7244912438413316866",
+      "normalized_sql": "SELECT current_setting(?), current_database(), inet_server_addr()::text, pg_database_size(current_database())",
+      "calls": 2,
+      "total_time_ms": 1.155,
+      "mean_time_ms": 0.577,
+      "rows_returned": 2,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "1414559647779493968",
+      "normalized_sql": "SELECT name, setting, unit FROM pg_settings WHERE name = ANY(?) ORDER BY name",
+      "calls": 1,
+      "total_time_ms": 0.671,
+      "mean_time_ms": 0.671,
+      "rows_returned": 26,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "7939327077164278139",
+      "normalized_sql": "SELECT schemaname, relname, pg_total_relation_size(relid), n_live_tup, seq_scan, n_dead_tup, last_autovacuum FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT ?",
+      "calls": 1,
+      "total_time_ms": 0.636,
+      "mean_time_ms": 0.636,
+      "rows_returned": 4,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "1744037007966613803",
+      "normalized_sql": "SELECT ui.schemaname || ? || ui.relname, ui.indexrelname, pg_get_indexdef(ui.indexrelid), pg_relation_size(ui.indexrelid), ui.idx_scan, ix.indisprimary, ix.indisunique FROM pg_stat_user_indexes ui JOIN pg_index ix ON ix.indexrelid = ui.indexrelid ORDER BY pg_relation_size(ui.indexrelid) DESC LIMIT ?",
+      "calls": 1,
+      "total_time_ms": 0.497,
+      "mean_time_ms": 0.497,
+      "rows_returned": 7,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "6389403904815175685",
+      "normalized_sql": "SELECT ? FROM pg_stat_statements LIMIT ?",
+      "calls": 2,
+      "total_time_ms": 0.226,
+      "mean_time_ms": 0.113,
+      "rows_returned": 2,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-9116726392372529709",
+      "normalized_sql": "SELECT COALESCE(MAX(id), ?) FROM users",
+      "calls": 2,
+      "total_time_ms": 0.143,
+      "mean_time_ms": 0.072,
+      "rows_returned": 2,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "8077705725342886459",
+      "normalized_sql": "SELECT pg_stat_statements_reset()",
+      "calls": 1,
+      "total_time_ms": 0.142,
+      "mean_time_ms": 0.142,
+      "rows_returned": 1,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-5700596362808262996",
+      "normalized_sql": "SELECT queryid::text, query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY total_exec_time DESC LIMIT ?",
+      "calls": 1,
+      "total_time_ms": 0.137,
+      "mean_time_ms": 0.137,
+      "rows_returned": 20,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "4415254176475518164",
+      "normalized_sql": "SELECT COALESCE(MAX(id), ?) FROM orders",
+      "calls": 2,
+      "total_time_ms": 0.109,
+      "mean_time_ms": 0.054,
+      "rows_returned": 2,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "551949679184186573",
+      "normalized_sql": "SELECT w.query, b.query, extract(? FROM clock_timestamp() - w.query_start) * ? FROM pg_stat_activity w JOIN LATERAL unnest(pg_blocking_pids(w.pid)) AS blocking(pid) ON ? JOIN pg_stat_activity b ON b.pid = blocking.pid WHERE w.datname = current_database()",
+      "calls": 1,
+      "total_time_ms": 0.108,
+      "mean_time_ms": 0.108,
+      "rows_returned": 1,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "1072999359081487511",
+      "normalized_sql": "SELECT pg_stat_reset()",
+      "calls": 1,
+      "total_time_ms": 0.09,
+      "mean_time_ms": 0.09,
+      "rows_returned": 1,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-5004568631854433319",
+      "normalized_sql": "SELECT pid, state, query, extract(? FROM clock_timestamp() - COALESCE(xact_start, query_start)) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()",
+      "calls": 1,
+      "total_time_ms": 0.083,
+      "mean_time_ms": 0.083,
+      "rows_returned": 3,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "2397681704071010949",
+      "normalized_sql": "BEGIN",
+      "calls": 12,
+      "total_time_ms": 0.082,
+      "mean_time_ms": 0.007,
+      "rows_returned": 0,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-2589529057941573298",
+      "normalized_sql": "SELECT (SELECT count(*) FROM pg_stat_activity), current_setting(?)::int",
+      "calls": 1,
+      "total_time_ms": 0.045,
+      "mean_time_ms": 0.045,
+      "rows_returned": 1,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "-471367678348975900",
+      "normalized_sql": "SELECT count(*) FROM pg_extension WHERE extname = ?",
+      "calls": 2,
+      "total_time_ms": 0.043,
+      "mean_time_ms": 0.022,
+      "rows_returned": 2,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "6187265680035032705",
+      "normalized_sql": "SHOW default_transaction_read_only",
+      "calls": 2,
+      "total_time_ms": 0.027,
+      "mean_time_ms": 0.013,
+      "rows_returned": 0,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "7088996947831101750",
+      "normalized_sql": "ROLLBACK",
+      "calls": 12,
+      "total_time_ms": 0.017,
+      "mean_time_ms": 0.001,
+      "rows_returned": 0,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "3012963866342342194",
+      "normalized_sql": "SELECT current_setting(?)",
+      "calls": 2,
+      "total_time_ms": 0.012,
+      "mean_time_ms": 0.006,
+      "rows_returned": 2,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    }
+  ],
+  "tables": [
+    {
+      "schema_name": "public",
+      "name": "order_items",
+      "size_bytes": 444293120,
+      "row_estimate": 3999991,
+      "seq_scans": 0,
+      "full_scan_rows_read": null,
+      "dead_tuple_ratio": 0.0,
+      "last_autovacuum": null,
+      "data_free_bytes": null,
+      "growth_30d_pct": null
+    },
+    {
+      "schema_name": "public",
+      "name": "users",
+      "size_bytes": 249462784,
+      "row_estimate": 1000000,
+      "seq_scans": 0,
+      "full_scan_rows_read": null,
+      "dead_tuple_ratio": 0.0,
+      "last_autovacuum": null,
+      "data_free_bytes": null,
+      "growth_30d_pct": null
+    },
+    {
+      "schema_name": "public",
+      "name": "events",
+      "size_bytes": 234692608,
+      "row_estimate": 2000000,
+      "seq_scans": 0,
+      "full_scan_rows_read": null,
+      "dead_tuple_ratio": 0.0,
+      "last_autovacuum": null,
+      "data_free_bytes": null,
+      "growth_30d_pct": null
+    },
+    {
+      "schema_name": "public",
+      "name": "orders",
+      "size_bytes": 185991168,
+      "row_estimate": 2000000,
+      "seq_scans": 9684,
+      "full_scan_rows_read": null,
+      "dead_tuple_ratio": 0.0,
+      "last_autovacuum": null,
+      "data_free_bytes": null,
+      "growth_30d_pct": null
+    }
+  ],
+  "indexes": [
+    {
+      "table": "public.order_items",
+      "name": "order_items_pkey",
+      "definition": "CREATE UNIQUE INDEX order_items_pkey ON public.order_items USING btree (id)",
+      "size_bytes": 89858048,
+      "scans": 0,
+      "is_primary": true,
+      "is_unique": true,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": false
+    },
+    {
+      "table": "public.order_items",
+      "name": "order_items_order_id_idx",
+      "definition": "CREATE INDEX order_items_order_id_idx ON public.order_items USING btree (order_id)",
+      "size_bytes": 81256448,
+      "scans": 64560,
+      "is_primary": false,
+      "is_unique": false,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": false
+    },
+    {
+      "table": "public.users",
+      "name": "users_email_idx",
+      "definition": "CREATE INDEX users_email_idx ON public.users USING btree (email)",
+      "size_bytes": 71270400,
+      "scans": 0,
+      "is_primary": false,
+      "is_unique": false,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": true
+    },
+    {
+      "table": "public.users",
+      "name": "users_email_dup_idx",
+      "definition": "CREATE INDEX users_email_dup_idx ON public.users USING btree (email)",
+      "size_bytes": 71270400,
+      "scans": 0,
+      "is_primary": false,
+      "is_unique": false,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": true
+    },
+    {
+      "table": "public.orders",
+      "name": "orders_pkey",
+      "definition": "CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)",
+      "size_bytes": 44941312,
+      "scans": 3230,
+      "is_primary": true,
+      "is_unique": true,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": false
+    },
+    {
+      "table": "public.events",
+      "name": "events_pkey",
+      "definition": "CREATE UNIQUE INDEX events_pkey ON public.events USING btree (id)",
+      "size_bytes": 44941312,
+      "scans": 3228,
+      "is_primary": true,
+      "is_unique": true,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": false
+    },
+    {
+      "table": "public.users",
+      "name": "users_pkey",
+      "definition": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)",
+      "size_bytes": 22487040,
+      "scans": 32294,
+      "is_primary": true,
+      "is_unique": true,
+      "is_duplicate_candidate": false,
+      "is_unused_candidate": false
+    }
+  ],
+  "sessions": [],
+  "lock_waits": [],
+  "connections": {
+    "current": 6,
+    "peak": null,
+    "max_limit": 100
+  },
+  "settings": [
+    {
+      "name": "autovacuum",
+      "value": "on",
+      "unit": null
+    },
+    {
+      "name": "autovacuum_analyze_scale_factor",
+      "value": "0.1",
+      "unit": null
+    },
+    {
+      "name": "autovacuum_naptime",
+      "value": "60",
+      "unit": "s"
+    },
+    {
+      "name": "autovacuum_vacuum_scale_factor",
+      "value": "0.2",
+      "unit": null
+    },
+    {
+      "name": "checkpoint_completion_target",
+      "value": "0.9",
+      "unit": null
+    },
+    {
+      "name": "checkpoint_timeout",
+      "value": "300",
+      "unit": "s"
+    },
+    {
+      "name": "default_statistics_target",
+      "value": "100",
+      "unit": null
+    },
+    {
+      "name": "effective_cache_size",
+      "value": "524288",
+      "unit": "8kB"
+    },
+    {
+      "name": "effective_io_concurrency",
+      "value": "1",
+      "unit": null
+    },
+    {
+      "name": "fsync",
+      "value": "on",
+      "unit": null
+    },
+    {
+      "name": "idle_in_transaction_session_timeout",
+      "value": "0",
+      "unit": "ms"
+    },
+    {
+      "name": "jit",
+      "value": "on",
+      "unit": null
+    },
+    {
+      "name": "maintenance_work_mem",
+      "value": "65536",
+      "unit": "kB"
+    },
+    {
+      "name": "max_connections",
+      "value": "100",
+      "unit": null
+    },
+    {
+      "name": "max_wal_size",
+      "value": "1024",
+      "unit": "MB"
+    },
+    {
+      "name": "min_wal_size",
+      "value": "80",
+      "unit": "MB"
+    },
+    {
+      "name": "random_page_cost",
+      "value": "4",
+      "unit": null
+    },
+    {
+      "name": "seq_page_cost",
+      "value": "1",
+      "unit": null
+    },
+    {
+      "name": "shared_buffers",
+      "value": "16384",
+      "unit": "8kB"
+    },
+    {
+      "name": "shared_preload_libraries",
+      "value": "pg_stat_statements",
+      "unit": null
+    },
+    {
+      "name": "statement_timeout",
+      "value": "5000",
+      "unit": "ms"
+    },
+    {
+      "name": "synchronous_commit",
+      "value": "on",
+      "unit": null
+    },
+    {
+      "name": "temp_buffers",
+      "value": "1024",
+      "unit": "8kB"
+    },
+    {
+      "name": "track_io_timing",
+      "value": "on",
+      "unit": null
+    },
+    {
+      "name": "wal_buffers",
+      "value": "512",
+      "unit": "8kB"
+    },
+    {
+      "name": "work_mem",
+      "value": "4096",
+      "unit": "kB"
+    }
+  ]
+}

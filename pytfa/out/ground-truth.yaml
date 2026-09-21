@@ -1,0 +1,22 @@
+defects:
+  - id: DEF-PAYMENT-DOWN-1
+    threadId: "a000000000000000000000000000000f"
+    timestampWindow:
+      start: "2026-08-24T09:04:59Z"
+      end:   "2026-08-24T09:06:00Z"
+    expectedDivergenceCallSite: "PaymentClient:34"
+    description: "payment-service down: order never confirmed"
+  - id: DEF-PAYMENT-DOWN-2
+    threadId: "a0000000000000000000000000000010"
+    timestampWindow:
+      start: "2026-08-24T09:05:19Z"
+      end:   "2026-08-24T09:06:20Z"
+    expectedDivergenceCallSite: "PaymentClient:34"
+    description: "payment-service down: order never confirmed"
+  - id: DEF-PAYMENT-DOWN-3
+    threadId: "a0000000000000000000000000000011"
+    timestampWindow:
+      start: "2026-08-24T09:05:39Z"
+      end:   "2026-08-24T09:06:40Z"
+    expectedDivergenceCallSite: "PaymentClient:34"
+    description: "payment-service down: order never confirmed"

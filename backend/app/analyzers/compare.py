@@ -1,18 +1,7 @@
-"""
-Dump comparison / delta — the "what changed between two captures?" view.
+"""Compatible-capture histogram deltas and full-stack persistence observations.
 
-A single dump is a snapshot; two dumps taken minutes apart turn a guess into a
-measurement. This is the classic leak workflow (and yCrash's headline feature):
-
-  * Two heap dumps → which classes *grew*. The biggest grower between a healthy
-    baseline and a struggling capture is almost always the leak — far more
-    decisive than eyeballing one histogram.
-  * Two thread dumps → which threads are *still stuck in the same place*. A thread
-    parked at the same line across both snapshots hasn't progressed: a real hang,
-    not a sampling artifact.
-
-Stateless over the already-serialized analysis dicts (the same JSON the UI holds),
-so it composes with the existing analyzers and the source index for `file:line`.
+Growth is not proof of a leak; recurring stacks do not prove a lack of progress.
+Missing partial-histogram entries remain unknown rather than being treated as zero.
 """
 from __future__ import annotations
 from typing import Dict, List, Optional, Any, Tuple
@@ -22,6 +11,7 @@ from ..schemas import (
     ClassDelta, HeapComparison, StuckThread, ThreadComparison,
 )
 from .source import SourceIndex, is_user_code
+from .evidence import compatibility, stamp
 
 
 def _outer(name: str) -> str:
@@ -51,7 +41,7 @@ def _class_index(heap: Dict[str, Any]) -> Dict[str, Tuple[int, int]]:
     """class_name -> (instance_count, shallow_size_bytes), unioned from both
     histograms the analysis retained (top-by-count and top-by-size)."""
     out: Dict[str, Tuple[int, int]] = {}
-    for key in ("top_classes_by_size", "top_classes_by_count"):
+    for key in (("histogram",) if heap.get("histogram_complete") else ("top_classes_by_size", "top_classes_by_count")):
         for e in heap.get(key) or []:
             name = e.get("class_name")
             if not name:
@@ -94,8 +84,15 @@ def compare_heaps(
     bi = _class_index(before)
     ai = _class_index(after)
 
+    compatible, limitations = compatibility(before, after, ordered=True)
+    complete = bool(before.get("histogram_complete") and after.get("histogram_complete"))
+    if not complete:
+        limitations.append("Only classes present in both partial histograms can be compared; missing entries are unknown, not zero.")
+    names = (set(bi) | set(ai)) if complete else (set(bi) & set(ai))
+    if not compatible:
+        names = set()
     deltas: List[ClassDelta] = []
-    for name in set(bi) | set(ai):
+    for name in names:
         bc, bsz = bi.get(name, (0, 0))
         ac, asz = ai.get(name, (0, 0))
         deltas.append(ClassDelta(
@@ -108,19 +105,27 @@ def compare_heaps(
                      key=lambda d: d.bytes_delta, reverse=True)
     new_classes = sorted([d for d in deltas if d.is_new and d.bytes_after > 0],
                          key=lambda d: d.bytes_after, reverse=True)
-    total_before = sum(sz for _, sz in bi.values())
-    total_after = sum(sz for _, sz in ai.values())
+    total_before = sum(bi.get(n, (0, 0))[1] for n in names)
+    total_after = sum(ai.get(n, (0, 0))[1] for n in names)
     growth = total_after - total_before
 
     findings = _heap_delta_findings(growers, new_classes, growth, total_before, source)
-    verdict = _verdict(findings)
+    if not compatible or (not complete and not names):
+        findings = [Finding(severity=Severity.WARNING, category="coverage", title="No valid comparison established",
+                            description=" ".join(limitations), limitations=limitations)]
+    stamp(findings)
+    verdict = _verdict(findings) if compatible and complete else "insufficient_evidence"
     summary = (
         f"Tracked {len(deltas)} class(es) across the two heaps: net "
         f"{_fmt_bytes(growth)} change"
         + (f", led by `{_simple(growers[0].class_name)}` (+{_fmt_bytes(growers[0].bytes_delta)})."
            if growers else " — nothing grew materially.")
     )
+    if not compatible:
+        summary = "Comparison unavailable: " + " ".join(limitations)
     return {
+        "coverage": "complete" if complete and compatible else "partial",
+        "limitations": limitations,
         "total_bytes_before": total_before,
         "total_bytes_after": total_after,
         "bytes_growth": growth,
@@ -156,7 +161,7 @@ def _heap_delta_findings(growers, new_classes, growth, total_before, source) -> 
         # prime leak suspect.
         doubled = d.bytes_before > 0 and d.bytes_after >= 2 * d.bytes_before
         big_share = total_before > 0 and d.bytes_delta / max(total_before, 1) > 0.10
-        severity = Severity.CRITICAL if (user or doubled or big_share) else Severity.WARNING
+        severity = Severity.WARNING
 
         loc = None
         if user and resolved < 3:
@@ -175,18 +180,16 @@ def _heap_delta_findings(growers, new_classes, growth, total_before, source) -> 
                 + (" It was absent from the first capture entirely." if d.is_new else "")
             ),
             impact=(
-                "If this keeps growing at this rate, the heap fills and the JVM ends in "
-                "OutOfMemoryError. The growth rate between these two dumps tells you how long "
-                "you have."
+                "Sustained growth can increase memory pressure. A rate and exhaustion forecast require capture intervals, capacity, and comparable workloads."
             ),
             likely_cause=(
-                f"`{simple}` instances are being retained without bound — a cache/registry/"
+                f"`{simple}` growth may reflect workload changes or retention in a cache/registry/"
                 "collection added to but never evicted, keyed by something unbounded."
             ),
             evidence=[f"shallow size: {grew_txt}", f"instances: {cnt_txt}"]
                      + (["present only in the second capture"] if d.is_new else []),
             remediation=(
-                "Treat this class as the leak. Capture a heap dump at the high-water mark and "
+                "Investigate this class as a growth candidate. Capture a heap dump at the high-water mark and "
                 "analyze it here to get the retaining field/line, then bound or evict the holder."
             ),
             category="comparison",
@@ -204,98 +207,65 @@ def _heap_delta_findings(growers, new_classes, growth, total_before, source) -> 
     return findings
 
 
-def _thread_index(thread: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    return {t.get("name"): t for t in (thread.get("threads") or []) if t.get("name")}
+def _thread_index(thread):
+    buckets = {}
+    for t in thread.get("threads") or []:
+        key = next((f"{k}:{t[k]}" for k in ("tid", "id", "nid") if t.get(k)), "name:" + t.get("name", ""))
+        buckets.setdefault(key, []).append(t)
+    # Duplicate identities are not safe to pair.
+    return {k: v[0] for k, v in buckets.items() if len(v) == 1}
 
 
-def _top_frame_sig(t: Dict[str, Any]) -> Optional[str]:
-    stack = t.get("stack") or []
-    if not stack:
-        return None
-    fr = stack[0]
-    cn, m = fr.get("class_name"), fr.get("method")
-    if not cn:
-        return None
-    return f"{cn}.{m}" + (f":{fr['line']}" if fr.get("line") else "")
+def _idle(t):
+    frames = {f"{f.get('class_name')}.{f.get('method')}" for f in t.get("stack", [])}
+    return any(any(p in f for p in ("ThreadPoolExecutor.getTask", "ForkJoinPool.awaitWork",
+                                    "ReferenceQueue.remove", "Finalizer$FinalizerThread.run",
+                                    "ScheduledThreadPoolExecutor$DelayedWorkQueue.take")) for f in frames)
 
 
-def compare_threads(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
-    """Diff two thread dumps → threads still stuck at the same spot in both."""
-    bi = _thread_index(before)
-    ai = _thread_index(after)
-
-    stuck: List[StuckThread] = []
-    for name in set(bi) & set(ai):
-        tb, ta = bi[name], ai[name]
-        sb, sa = _top_frame_sig(tb), _top_frame_sig(ta)
-        if sb and sb == sa:
-            state = ta.get("state") or "UNKNOWN"
-            stuck.append(StuckThread(
-                name=name, state=str(state), top_frame=sa,
-                blocked=str(state) in ("BLOCKED", "WAITING", "TIMED_WAITING"),
-            ))
-
-    stuck.sort(key=lambda s: (not s.blocked, s.name))
-    findings = _thread_delta_findings(stuck, len(bi), len(ai))
-    verdict = _verdict(findings)
-    summary = (
-        f"Compared {len(bi)} vs {len(ai)} threads: "
-        + (f"{len(stuck)} stuck in the same place across both captures."
-           if stuck else "no threads are stuck at the same spot in both captures.")
-    )
-    return {
-        "stuck_threads": [s.model_dump() for s in stuck],
-        "findings": [f.model_dump() for f in findings],
-        "summary": summary,
-        "verdict": verdict,
-    }
-
-
-def _thread_delta_findings(stuck: List[StuckThread], n_before, n_after) -> List[Finding]:
-    if not stuck:
-        return [Finding(
-            severity=Severity.INFO,
-            title="No persistently stuck threads",
-            description=(
-                "No thread is parked at the same stack frame in both captures. Threads are "
-                "progressing between snapshots — what you saw in a single dump was likely "
-                "transient, not a hang."
-            ),
-            category="comparison",
-        )]
-    blocked = [s for s in stuck if s.blocked]
-    severity = Severity.CRITICAL if blocked else Severity.WARNING
-    lead = stuck[0]
-    return [Finding(
-        severity=severity,
-        title=f"{len(stuck)} thread(s) stuck in the same place across both dumps",
-        description=(
-            "These threads are parked at the identical stack frame in both captures, so they "
-            "have not progressed between the two snapshots — a real hang, not a sampling blip. "
-            f"Lead: `{lead.name}` at `{lead.top_frame}` (state {lead.state})."
-        ),
-        impact=(
-            "Stuck worker threads don't return to the pool: throughput drops, queues back up, "
-            "and the service can wedge entirely if enough threads are pinned here."
-        ),
-        likely_cause=(
-            "A blocking call with no timeout, lock contention on a hot monitor, or an external "
-            "dependency (DB/HTTP) not responding. " +
-            ("Several are BLOCKED/WAITING — check what holds the lock or resource they want."
-             if blocked else "They are progressing through the same code repeatedly or wedged in a loop.")
-        ),
-        evidence=[f"{s.name} @ {s.top_frame} ({s.state})" for s in stuck[:8]],
-        remediation=(
-            "Open the shared frame above. Add timeouts to blocking calls, reduce lock scope, "
-            "and confirm the downstream dependency is healthy. If BLOCKED, find the lock owner."
-        ),
-        category="comparison",
-    )]
+def compare_threads(before, after):
+    bi, ai = _thread_index(before), _thread_index(after)
+    compatible, limitations = compatibility(before, after, ordered=True)
+    stuck = []
+    for key in sorted(set(bi) & set(ai)) if compatible else []:
+        tb, ta = bi[key], ai[key]
+        sig = lambda t: [(f.get("class_name"), f.get("method"), f.get("line")) for f in t.get("stack", [])]
+        sb, sa = sig(tb), sig(ta)
+        if not sb or sb != sa or _idle(ta) or tb.get("state") != ta.get("state"):
+            continue
+        elapsed = None
+        if ta.get("elapsed_s") is not None and tb.get("elapsed_s") is not None:
+            elapsed = ta["elapsed_s"] - tb["elapsed_s"]
+            if elapsed <= 0:
+                continue
+        cpu = None
+        if ta.get("cpu_ms") is not None and tb.get("cpu_ms") is not None:
+            cpu = ta["cpu_ms"] - tb["cpu_ms"]
+            if cpu < 0: continue  # likely thread reuse or restarted process
+        state = ta.get("state", "UNKNOWN")
+        classification = "persistent_wait" if state in ("BLOCKED", "WAITING", "TIMED_WAITING") else "repeated_stack"
+        if cpu and cpu > 0:
+            classification = "active_repeated_stack"
+        cn, method, line = sa[0]
+        stuck.append(StuckThread(name=ta.get("name", key), identity=key, state=state,
+                                  top_frame=f"{cn}.{method}:{line}", blocked=state == "BLOCKED",
+                                  cpu_delta_ms=cpu, interval_s=elapsed, classification=classification))
+    if stuck:
+        findings = [Finding(severity=Severity.WARNING, title=f"{len(stuck)} thread(s) with persistent stacks",
+                            description="The full stack and state recur. This is a sampling observation, not proof that no work progressed between captures.",
+                            category="comparison", conclusion="observation", confidence="medium",
+                            evidence=[f"{t.name}: {t.classification} at {t.top_frame}; CPU delta {t.cpu_delta_ms} ms" for t in stuck],
+                            remediation="Inspect wait reasons and lock owners; capture additional samples and dependency latency before changing timeouts or pool sizes.")]
+    else:
+        findings = [Finding(severity=Severity.INFO, category="comparison", title="No persistently stuck threads established",
+                            description="No non-idle unchanged full stacks were paired. Different stacks do not establish forward progress.")]
+    stamp(findings)
+    return {"stuck_threads": [t.model_dump() for t in stuck], "findings": [f.model_dump() for f in findings],
+            "limitations": limitations, "summary": f"Compared {len(bi)} and {len(ai)} unambiguous thread identities; {len(stuck)} persistent stacks.",
+            "verdict": _verdict(findings) if compatible else "insufficient_evidence"}
 
 
-def _verdict(findings: List[Finding]) -> str:
-    if any(f.severity == Severity.CRITICAL for f in findings):
-        return "critical"
-    if any(f.severity == Severity.WARNING for f in findings):
-        return "degraded"
+def _verdict(findings):
+    if any(f.severity == Severity.CRITICAL for f in findings): return "critical"
+    if any(f.severity == Severity.WARNING for f in findings): return "degraded"
     return "healthy"

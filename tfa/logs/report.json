@@ -1,0 +1,701 @@
+{
+  "meta": {
+    "toolVersion": "0.1.0",
+    "runTimestamp": "2026-08-22T13:03:49.487512554Z",
+    "configHash": "a595ce7b252d62818dafa92d993894006810cdbe7c79e0934e8cfaaf33b454cb",
+    "corpusHash": "659c5562fc80f89ca78a3b980af7f4d2edb052ad5aed2ba65b7396dd3a63780e",
+    "corpusStart": "2026-08-20T00:02:33.009Z",
+    "corpusEnd": "2026-08-22T23:58:48.536Z",
+    "profile": "default",
+    "strategy": "IDLE_GAP",
+    "files": [
+      {
+        "name": "app.log.2026-08-20",
+        "sizeBytes": 3061513
+      },
+      {
+        "name": "app.log.2026-08-21",
+        "sizeBytes": 3120340
+      },
+      {
+        "name": "error.log",
+        "sizeBytes": 567
+      },
+      {
+        "name": "app.log.2026-08-22",
+        "sizeBytes": 3050052
+      },
+      {
+        "name": "generate_logs.py",
+        "sizeBytes": 16112
+      },
+      {
+        "name": "ground-truth.yaml",
+        "sizeBytes": 1602
+      }
+    ]
+  },
+  "summary": {
+    "episodesEvaluated": 13350,
+    "episodesCensored": 4,
+    "censorMarginMillis": 60000,
+    "totalFindings": 38,
+    "suppressedCount": 0
+  },
+  "findings": [
+    {
+      "rank": 1,
+      "score": 2.499798,
+      "type": "TRUNCATION",
+      "occurrences": 1,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.auth.LoginController:60",
+      "divergenceIndex": 13,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-24",
+      "exampleTimestamp": "2026-08-22T10:36:29.599Z",
+      "scoreBreakdown": {
+        "rarity": 0.999798,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T10:36:29.703Z | INFO | http-nio-8080-exec-24 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-11297",
+        "     2026-08-22T10:36:29.709Z | INFO | http-nio-8080-exec-24 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-11297",
+        "     2026-08-22T10:36:33.155Z | INFO | http-nio-8080-exec-24 | com.bank.auth.LoginController:22 | Received login request user=LOG-11298",
+        "     2026-08-22T10:36:33.168Z | INFO | http-nio-8080-exec-24 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-11298",
+        "     2026-08-22T10:36:33.194Z | INFO | http-nio-8080-exec-24 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-11298",
+        "  >> 2026-08-22T10:36:33.200Z | INFO | http-nio-8080-exec-24 | com.bank.auth.LoginController:60 | Login request completed user=LOG-11298",
+        "     2026-08-22T10:36:36.323Z | INFO | http-nio-8080-exec-24 | com.bank.auth.LoginController:22 | Received login request user=LOG-11299",
+        "     2026-08-22T10:36:36.352Z | INFO | http-nio-8080-exec-24 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-11299",
+        "     2026-08-22T10:36:36.369Z | INFO | http-nio-8080-exec-24 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-11299",
+        "     2026-08-22T10:36:36.372Z | INFO | http-nio-8080-exec-24 | com.bank.auth.LoginController:60 | Login request completed user=LOG-11299"
+      ]
+    },
+    {
+      "rank": 2,
+      "score": 2.499798,
+      "type": "TRUNCATION",
+      "occurrences": 1,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.auth.LoginController:60",
+      "divergenceIndex": 15,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-1",
+      "exampleTimestamp": "2026-08-22T17:32:11.487Z",
+      "scoreBreakdown": {
+        "rarity": 0.999798,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T17:32:16.526Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-13803",
+        "     2026-08-22T17:32:16.536Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-13803",
+        "     2026-08-22T17:32:17.183Z | INFO | http-nio-8080-exec-1 | com.bank.auth.LoginController:22 | Received login request user=LOG-13804",
+        "     2026-08-22T17:32:17.223Z | INFO | http-nio-8080-exec-1 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-13804",
+        "     2026-08-22T17:32:17.283Z | INFO | http-nio-8080-exec-1 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-13804",
+        "  >> 2026-08-22T17:32:17.288Z | INFO | http-nio-8080-exec-1 | com.bank.auth.LoginController:60 | Login request completed user=LOG-13804"
+      ]
+    },
+    {
+      "rank": 3,
+      "score": 2.499798,
+      "type": "TRUNCATION",
+      "occurrences": 1,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.order.InventoryClient:112",
+      "divergenceIndex": 2,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-90",
+      "exampleTimestamp": "2026-08-21T10:17:00Z",
+      "scoreBreakdown": {
+        "rarity": 0.999798,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-21T10:17:00Z | INFO | http-nio-8080-exec-90 | com.bank.order.OrderController:45 | Received order request orderId=ORD-14601",
+        "     2026-08-21T10:17:00.028Z | INFO | http-nio-8080-exec-90 | com.bank.order.OrderService:88 | Validating order orderId=ORD-14601",
+        "  >> 2026-08-21T10:17:00.071Z | INFO | http-nio-8080-exec-90 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-14601"
+      ]
+    },
+    {
+      "rank": 4,
+      "score": 2.499774,
+      "type": "TRUNCATION",
+      "occurrences": 1,
+      "clusterSignature": "com.bank.auth.LoginController:22 > com.bank.auth.AuthService:55 > com.bank.auth.SessionManager:33",
+      "clusterSize": 4420,
+      "divergenceCallSite": "com.bank.auth.LoginController:60",
+      "divergenceIndex": 12,
+      "expectedCallSite": "com.bank.auth.LoginController:60",
+      "expectedShare": 0.977828,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-24",
+      "exampleTimestamp": "2026-08-22T13:26:48.782Z",
+      "scoreBreakdown": {
+        "rarity": 0.999774,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T13:26:48.782Z | INFO | http-nio-8080-exec-24 | com.bank.auth.LoginController:22 | Received login request user=LOG-12310",
+        "     2026-08-22T13:26:48.805Z | INFO | http-nio-8080-exec-24 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-12310",
+        "     2026-08-22T13:26:48.842Z | INFO | http-nio-8080-exec-24 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-12310",
+        "  >> 2026-08-22T13:26:48.849Z | INFO | http-nio-8080-exec-24 | com.bank.auth.LoginController:60 | Login request completed user=LOG-12310",
+        "     2026-08-22T13:26:50.362Z | INFO | http-nio-8080-exec-24 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-12311",
+        "     2026-08-22T13:26:50.387Z | INFO | http-nio-8080-exec-24 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-12311",
+        "     2026-08-22T13:26:50.486Z | INFO | http-nio-8080-exec-24 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-12311",
+        "     2026-08-22T13:26:50.674Z | INFO | http-nio-8080-exec-24 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-12311",
+        "     2026-08-22T13:26:50.684Z | INFO | http-nio-8080-exec-24 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-12311"
+      ]
+    },
+    {
+      "rank": 5,
+      "score": 2.499774,
+      "type": "TRUNCATION",
+      "occurrences": 1,
+      "clusterSignature": "com.bank.auth.LoginController:22 > com.bank.auth.AuthService:55 > com.bank.auth.SessionManager:33",
+      "clusterSize": 4420,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 15,
+      "expectedCallSite": "com.bank.auth.LoginController:60",
+      "expectedShare": 0.977828,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-15",
+      "exampleTimestamp": "2026-08-22T12:02:27.851Z",
+      "scoreBreakdown": {
+        "rarity": 0.999774,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T12:02:31.864Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderController:45 | Received order request orderId=ORD-11829",
+        "     2026-08-22T12:02:31.887Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderService:88 | Validating order orderId=ORD-11829",
+        "     2026-08-22T12:02:31.942Z | INFO | http-nio-8080-exec-15 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-11829",
+        "     2026-08-22T12:02:31.973Z | INFO | http-nio-8080-exec-15 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-11829",
+        "     2026-08-22T12:02:32.007Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-11829",
+        "  >> 2026-08-22T12:02:32.015Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-11829",
+        "     2026-08-22T12:02:33.941Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderController:45 | Received order request orderId=ORD-11830",
+        "     2026-08-22T12:02:33.965Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderService:88 | Validating order orderId=ORD-11830",
+        "     2026-08-22T12:02:34.016Z | INFO | http-nio-8080-exec-15 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-11830",
+        "     2026-08-22T12:02:34.067Z | INFO | http-nio-8080-exec-15 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-11830",
+        "     2026-08-22T12:02:34.091Z | INFO | http-nio-8080-exec-15 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-11830"
+      ]
+    },
+    {
+      "rank": 6,
+      "score": 2.499698,
+      "type": "TRUNCATION",
+      "occurrences": 1,
+      "clusterSignature": "com.bank.payment.PaymentController:30 > com.bank.payment.PaymentService:64 > com.bank.payment.FraudCheckClient:41",
+      "clusterSize": 3312,
+      "divergenceCallSite": "com.bank.payment.PaymentController:80",
+      "divergenceIndex": 13,
+      "expectedCallSite": "com.bank.payment.PaymentController:80",
+      "expectedShare": 0.986715,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-6",
+      "exampleTimestamp": "2026-08-22T16:01:37.578Z",
+      "scoreBreakdown": {
+        "rarity": 0.999698,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T16:01:37.578Z | INFO | http-nio-8080-exec-6 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-13262",
+        "     2026-08-22T16:01:37.593Z | INFO | http-nio-8080-exec-6 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-13262",
+        "     2026-08-22T16:01:37.678Z | INFO | http-nio-8080-exec-6 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-13262",
+        "     2026-08-22T16:01:37.762Z | INFO | http-nio-8080-exec-6 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-13262",
+        "  >> 2026-08-22T16:01:37.771Z | INFO | http-nio-8080-exec-6 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-13262",
+        "     2026-08-22T16:01:38.886Z | INFO | http-nio-8080-exec-6 | com.bank.auth.LoginController:22 | Received login request user=LOG-13264",
+        "     2026-08-22T16:01:38.911Z | INFO | http-nio-8080-exec-6 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-13264",
+        "     2026-08-22T16:01:38.966Z | INFO | http-nio-8080-exec-6 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-13264",
+        "     2026-08-22T16:01:38.973Z | INFO | http-nio-8080-exec-6 | com.bank.auth.LoginController:60 | Login request completed user=LOG-13264",
+        "     2026-08-22T16:01:39.206Z | INFO | http-nio-8080-exec-6 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-13265"
+      ]
+    },
+    {
+      "rank": 7,
+      "score": 2.499595,
+      "type": "TRUNCATION",
+      "occurrences": 2,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 17,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-17",
+      "exampleTimestamp": "2026-08-21T17:15:23.119Z",
+      "scoreBreakdown": {
+        "rarity": 0.999595,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-21T17:15:23.119Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderController:45 | Received order request orderId=ORD-9210",
+        "     2026-08-21T17:15:23.130Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderService:88 | Validating order orderId=ORD-9210",
+        "     2026-08-21T17:15:23.167Z | INFO | http-nio-8080-exec-17 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-9210",
+        "     2026-08-21T17:15:23.254Z | INFO | http-nio-8080-exec-17 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-9210",
+        "     2026-08-21T17:15:23.269Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-9210",
+        "  >> 2026-08-21T17:15:23.278Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-9210",
+        "     2026-08-21T17:15:25.322Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderController:45 | Received order request orderId=ORD-9211",
+        "     2026-08-21T17:15:25.346Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderService:88 | Validating order orderId=ORD-9211",
+        "     2026-08-21T17:15:25.379Z | INFO | http-nio-8080-exec-17 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-9211",
+        "     2026-08-21T17:15:25.484Z | INFO | http-nio-8080-exec-17 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-9211",
+        "     2026-08-21T17:15:25.521Z | INFO | http-nio-8080-exec-17 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-9211"
+      ]
+    },
+    {
+      "rank": 8,
+      "score": 2.499396,
+      "type": "TRUNCATION",
+      "occurrences": 2,
+      "clusterSignature": "com.bank.payment.PaymentController:30 > com.bank.payment.PaymentService:64 > com.bank.payment.FraudCheckClient:41",
+      "clusterSize": 3312,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 11,
+      "expectedCallSite": "com.bank.payment.PaymentController:80",
+      "expectedShare": 0.986715,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-10",
+      "exampleTimestamp": "2026-08-22T12:04:26.242Z",
+      "scoreBreakdown": {
+        "rarity": 0.999396,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T12:04:27.952Z | INFO | http-nio-8080-exec-10 | com.bank.order.OrderService:88 | Validating order orderId=ORD-11849",
+        "     2026-08-22T12:04:27.960Z | INFO | http-nio-8080-exec-10 | com.bank.order.OrderService:95 | Coupon applied to orderId=ORD-11849",
+        "     2026-08-22T12:04:27.996Z | INFO | http-nio-8080-exec-10 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-11849",
+        "     2026-08-22T12:04:28.106Z | INFO | http-nio-8080-exec-10 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-11849",
+        "     2026-08-22T12:04:28.141Z | INFO | http-nio-8080-exec-10 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-11849",
+        "  >> 2026-08-22T12:04:28.150Z | INFO | http-nio-8080-exec-10 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-11849"
+      ]
+    },
+    {
+      "rank": 9,
+      "score": 2.499321,
+      "type": "TRUNCATION",
+      "occurrences": 3,
+      "clusterSignature": "com.bank.auth.LoginController:22 > com.bank.auth.AuthService:55 > com.bank.auth.SessionManager:33",
+      "clusterSize": 4420,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 10,
+      "expectedCallSite": "com.bank.auth.LoginController:60",
+      "expectedShare": 0.977828,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-14",
+      "exampleTimestamp": "2026-08-22T13:29:13.897Z",
+      "scoreBreakdown": {
+        "rarity": 0.999321,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T13:29:15.172Z | INFO | http-nio-8080-exec-14 | com.bank.order.OrderService:88 | Validating order orderId=ORD-12331",
+        "     2026-08-22T13:29:15.175Z | INFO | http-nio-8080-exec-14 | com.bank.order.OrderService:95 | Coupon applied to orderId=ORD-12331",
+        "     2026-08-22T13:29:15.195Z | INFO | http-nio-8080-exec-14 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-12331",
+        "     2026-08-22T13:29:15.221Z | INFO | http-nio-8080-exec-14 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-12331",
+        "     2026-08-22T13:29:15.257Z | INFO | http-nio-8080-exec-14 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-12331",
+        "  >> 2026-08-22T13:29:15.263Z | INFO | http-nio-8080-exec-14 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-12331"
+      ]
+    },
+    {
+      "rank": 10,
+      "score": 2.499191,
+      "type": "TRUNCATION",
+      "occurrences": 4,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 12,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-1",
+      "exampleTimestamp": "2026-08-22T21:23:00.575Z",
+      "scoreBreakdown": {
+        "rarity": 0.999191,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T21:23:00.575Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:45 | Received order request orderId=ORD-14472",
+        "     2026-08-22T21:23:00.594Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:88 | Validating order orderId=ORD-14472",
+        "     2026-08-22T21:23:00.664Z | INFO | http-nio-8080-exec-1 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-14472",
+        "     2026-08-22T21:23:00.718Z | INFO | http-nio-8080-exec-1 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-14472",
+        "     2026-08-22T21:23:00.732Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-14472",
+        "  >> 2026-08-22T21:23:00.738Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-14472",
+        "     2026-08-22T21:23:03.537Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:45 | Received order request orderId=ORD-14474",
+        "     2026-08-22T21:23:03.565Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:88 | Validating order orderId=ORD-14474",
+        "     2026-08-22T21:23:03.577Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:95 | Coupon applied to orderId=ORD-14474",
+        "     2026-08-22T21:23:03.642Z | INFO | http-nio-8080-exec-1 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-14474",
+        "     2026-08-22T21:23:03.701Z | INFO | http-nio-8080-exec-1 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-14474"
+      ]
+    },
+    {
+      "rank": 11,
+      "score": 2.497283,
+      "type": "TRUNCATION",
+      "occurrences": 9,
+      "clusterSignature": "com.bank.payment.PaymentController:30 > com.bank.payment.PaymentService:64 > com.bank.payment.FraudCheckClient:41",
+      "clusterSize": 3312,
+      "divergenceCallSite": "com.bank.payment.PaymentController:80",
+      "divergenceIndex": 9,
+      "expectedCallSite": "com.bank.payment.PaymentController:80",
+      "expectedShare": 0.986715,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-13",
+      "exampleTimestamp": "2026-08-21T16:04:12.511Z",
+      "scoreBreakdown": {
+        "rarity": 0.997283,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-21T16:04:12.511Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-8806",
+        "     2026-08-21T16:04:12.530Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-8806",
+        "     2026-08-21T16:04:12.615Z | INFO | http-nio-8080-exec-13 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-8806",
+        "     2026-08-21T16:04:12.792Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-8806",
+        "  >> 2026-08-21T16:04:12.795Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-8806",
+        "     2026-08-21T16:04:16.116Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-8807",
+        "     2026-08-21T16:04:16.139Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-8807",
+        "     2026-08-21T16:04:16.230Z | INFO | http-nio-8080-exec-13 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-8807",
+        "     2026-08-21T16:04:16.263Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-8807",
+        "     2026-08-21T16:04:16.268Z | INFO | http-nio-8080-exec-13 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-8807"
+      ]
+    },
+    {
+      "rank": 12,
+      "score": 2.495955,
+      "type": "TRUNCATION",
+      "occurrences": 20,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.payment.PaymentController:80",
+      "divergenceIndex": 10,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-10",
+      "exampleTimestamp": "2026-08-20T16:26:01.762Z",
+      "scoreBreakdown": {
+        "rarity": 0.995955,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-20T16:26:01.880Z | INFO | http-nio-8080-exec-10 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-4329",
+        "     2026-08-20T16:26:05.488Z | INFO | http-nio-8080-exec-10 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-4330",
+        "     2026-08-20T16:26:05.503Z | INFO | http-nio-8080-exec-10 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-4330",
+        "     2026-08-20T16:26:05.546Z | INFO | http-nio-8080-exec-10 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-4330",
+        "     2026-08-20T16:26:05.738Z | INFO | http-nio-8080-exec-10 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-4330",
+        "  >> 2026-08-20T16:26:05.740Z | INFO | http-nio-8080-exec-10 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-4330"
+      ]
+    },
+    {
+      "rank": 13,
+      "score": 2.495773,
+      "type": "TRUNCATION",
+      "occurrences": 14,
+      "clusterSignature": "com.bank.payment.PaymentController:30 > com.bank.payment.PaymentService:64 > com.bank.payment.FraudCheckClient:41",
+      "clusterSize": 3312,
+      "divergenceCallSite": "com.bank.auth.LoginController:60",
+      "divergenceIndex": 8,
+      "expectedCallSite": "com.bank.payment.PaymentController:80",
+      "expectedShare": 0.986715,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-10",
+      "exampleTimestamp": "2026-08-22T11:07:11.306Z",
+      "scoreBreakdown": {
+        "rarity": 0.995773,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T11:07:11.488Z | INFO | http-nio-8080-exec-10 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-11481",
+        "     2026-08-22T11:07:11.490Z | INFO | http-nio-8080-exec-10 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-11481",
+        "     2026-08-22T11:07:15.245Z | INFO | http-nio-8080-exec-10 | com.bank.auth.LoginController:22 | Received login request user=LOG-11484",
+        "     2026-08-22T11:07:15.275Z | INFO | http-nio-8080-exec-10 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-11484",
+        "     2026-08-22T11:07:15.311Z | INFO | http-nio-8080-exec-10 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-11484",
+        "  >> 2026-08-22T11:07:15.316Z | INFO | http-nio-8080-exec-10 | com.bank.auth.LoginController:60 | Login request completed user=LOG-11484"
+      ]
+    },
+    {
+      "rank": 14,
+      "score": 2.495023,
+      "type": "TRUNCATION",
+      "occurrences": 22,
+      "clusterSignature": "com.bank.auth.LoginController:22 > com.bank.auth.AuthService:55 > com.bank.auth.SessionManager:33",
+      "clusterSize": 4420,
+      "divergenceCallSite": "com.bank.payment.PaymentController:80",
+      "divergenceIndex": 8,
+      "expectedCallSite": "com.bank.auth.LoginController:60",
+      "expectedShare": 0.977828,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-11",
+      "exampleTimestamp": "2026-08-20T11:57:22.711Z",
+      "scoreBreakdown": {
+        "rarity": 0.995023,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-20T11:57:22.757Z | INFO | http-nio-8080-exec-11 | com.bank.auth.LoginController:60 | Login request completed user=LOG-2680",
+        "     2026-08-20T11:57:27.503Z | INFO | http-nio-8080-exec-11 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-2682",
+        "     2026-08-20T11:57:27.522Z | INFO | http-nio-8080-exec-11 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-2682",
+        "     2026-08-20T11:57:27.548Z | INFO | http-nio-8080-exec-11 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-2682",
+        "     2026-08-20T11:57:27.690Z | INFO | http-nio-8080-exec-11 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-2682",
+        "  >> 2026-08-20T11:57:27.693Z | INFO | http-nio-8080-exec-11 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-2682"
+      ]
+    },
+    {
+      "rank": 15,
+      "score": 2.494565,
+      "type": "TRUNCATION",
+      "occurrences": 18,
+      "clusterSignature": "com.bank.payment.PaymentController:30 > com.bank.payment.PaymentService:64 > com.bank.payment.FraudCheckClient:41",
+      "clusterSize": 3312,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 10,
+      "expectedCallSite": "com.bank.payment.PaymentController:80",
+      "expectedShare": 0.986715,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-1",
+      "exampleTimestamp": "2026-08-20T11:48:28.563Z",
+      "scoreBreakdown": {
+        "rarity": 0.994565,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-20T11:48:32.020Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:45 | Received order request orderId=ORD-2625",
+        "     2026-08-20T11:48:32.033Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:88 | Validating order orderId=ORD-2625",
+        "     2026-08-20T11:48:32.088Z | INFO | http-nio-8080-exec-1 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-2625",
+        "     2026-08-20T11:48:32.207Z | INFO | http-nio-8080-exec-1 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-2625",
+        "     2026-08-20T11:48:32.237Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-2625",
+        "  >> 2026-08-20T11:48:32.244Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-2625"
+      ]
+    },
+    {
+      "rank": 16,
+      "score": 2.494337,
+      "type": "TRUNCATION",
+      "occurrences": 28,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 11,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-1",
+      "exampleTimestamp": "2026-08-22T10:23:10.102Z",
+      "scoreBreakdown": {
+        "rarity": 0.994337,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T10:23:10.102Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:45 | Received order request orderId=ORD-11214",
+        "     2026-08-22T10:23:10.122Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:88 | Validating order orderId=ORD-11214",
+        "     2026-08-22T10:23:10.164Z | INFO | http-nio-8080-exec-1 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-11214",
+        "     2026-08-22T10:23:10.258Z | INFO | http-nio-8080-exec-1 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-11214",
+        "     2026-08-22T10:23:10.288Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-11214",
+        "  >> 2026-08-22T10:23:10.290Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-11214",
+        "     2026-08-22T10:23:12.377Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:45 | Received order request orderId=ORD-11215",
+        "     2026-08-22T10:23:12.388Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:88 | Validating order orderId=ORD-11215",
+        "     2026-08-22T10:23:12.448Z | INFO | http-nio-8080-exec-1 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-11215",
+        "     2026-08-22T10:23:12.548Z | INFO | http-nio-8080-exec-1 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-11215",
+        "     2026-08-22T10:23:12.573Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-11215"
+      ]
+    },
+    {
+      "rank": 17,
+      "score": 2.493730,
+      "type": "TRUNCATION",
+      "occurrences": 31,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.InventoryClient:112",
+      "clusterSize": 4944,
+      "divergenceCallSite": "com.bank.auth.LoginController:60",
+      "divergenceIndex": 9,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982201,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-1",
+      "exampleTimestamp": "2026-08-21T21:34:00.293Z",
+      "scoreBreakdown": {
+        "rarity": 0.993730,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-21T21:34:00.455Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-10023",
+        "     2026-08-21T21:34:00.462Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-10023",
+        "     2026-08-21T21:34:02.335Z | INFO | http-nio-8080-exec-1 | com.bank.auth.LoginController:22 | Received login request user=LOG-10024",
+        "     2026-08-21T21:34:02.355Z | INFO | http-nio-8080-exec-1 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-10024",
+        "     2026-08-21T21:34:02.385Z | INFO | http-nio-8080-exec-1 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-10024",
+        "  >> 2026-08-21T21:34:02.389Z | INFO | http-nio-8080-exec-1 | com.bank.auth.LoginController:60 | Login request completed user=LOG-10024"
+      ]
+    },
+    {
+      "rank": 18,
+      "score": 2.493439,
+      "type": "TRUNCATION",
+      "occurrences": 29,
+      "clusterSignature": "com.bank.auth.LoginController:22 > com.bank.auth.AuthService:55 > com.bank.auth.SessionManager:33",
+      "clusterSize": 4420,
+      "divergenceCallSite": "com.bank.auth.LoginController:60",
+      "divergenceIndex": 7,
+      "expectedCallSite": "com.bank.auth.LoginController:60",
+      "expectedShare": 0.977828,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-11",
+      "exampleTimestamp": "2026-08-22T13:30:09.246Z",
+      "scoreBreakdown": {
+        "rarity": 0.993439,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T13:30:09.246Z | INFO | http-nio-8080-exec-11 | com.bank.auth.LoginController:22 | Received login request user=LOG-12340",
+        "     2026-08-22T13:30:09.283Z | INFO | http-nio-8080-exec-11 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-12340",
+        "     2026-08-22T13:30:09.304Z | INFO | http-nio-8080-exec-11 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-12340",
+        "  >> 2026-08-22T13:30:09.311Z | INFO | http-nio-8080-exec-11 | com.bank.auth.LoginController:60 | Login request completed user=LOG-12340",
+        "     2026-08-22T13:30:12.946Z | INFO | http-nio-8080-exec-11 | com.bank.auth.LoginController:22 | Received login request user=LOG-12341",
+        "     2026-08-22T13:30:12.978Z | INFO | http-nio-8080-exec-11 | com.bank.auth.AuthService:55 | Verifying credentials for user=LOG-12341",
+        "     2026-08-22T13:30:13.020Z | INFO | http-nio-8080-exec-11 | com.bank.auth.SessionManager:33 | Creating session for user=LOG-12341",
+        "     2026-08-22T13:30:13.027Z | INFO | http-nio-8080-exec-11 | com.bank.auth.LoginController:60 | Login request completed user=LOG-12341"
+      ]
+    },
+    {
+      "rank": 19,
+      "score": 2.490498,
+      "type": "TRUNCATION",
+      "occurrences": 42,
+      "clusterSignature": "com.bank.auth.LoginController:22 > com.bank.auth.AuthService:55 > com.bank.auth.SessionManager:33",
+      "clusterSize": 4420,
+      "divergenceCallSite": "com.bank.order.OrderController:99",
+      "divergenceIndex": 9,
+      "expectedCallSite": "com.bank.auth.LoginController:60",
+      "expectedShare": 0.977828,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-1",
+      "exampleTimestamp": "2026-08-21T17:20:34.024Z",
+      "scoreBreakdown": {
+        "rarity": 0.990498,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 1,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-21T17:20:36.309Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:45 | Received order request orderId=ORD-9237",
+        "     2026-08-21T17:20:36.314Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:88 | Validating order orderId=ORD-9237",
+        "     2026-08-21T17:20:36.377Z | INFO | http-nio-8080-exec-1 | com.bank.order.InventoryClient:112 | Checking inventory for orderId=ORD-9237",
+        "     2026-08-21T17:20:36.475Z | INFO | http-nio-8080-exec-1 | com.bank.order.PaymentClient:76 | Charging payment for orderId=ORD-9237",
+        "     2026-08-21T17:20:36.510Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderService:150 | Persisting order orderId=ORD-9237",
+        "  >> 2026-08-21T17:20:36.519Z | INFO | http-nio-8080-exec-1 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-9237"
+      ]
+    },
+    {
+      "rank": 20,
+      "score": 2.468922,
+      "type": "TRUNCATION",
+      "occurrences": 2,
+      "clusterSignature": "com.bank.order.OrderController:45 > com.bank.order.OrderService:88 > com.bank.order.OrderService:95",
+      "clusterSize": 678,
+      "divergenceCallSite": "com.bank.payment.PaymentController:80",
+      "divergenceIndex": 11,
+      "expectedCallSite": "com.bank.order.OrderController:99",
+      "expectedShare": 0.982301,
+      "observed": "TRUNCATED",
+      "exampleThread": "http-nio-8080-exec-4",
+      "exampleTimestamp": "2026-08-22T15:21:47.030Z",
+      "scoreBreakdown": {
+        "rarity": 0.997050,
+        "severity": 1,
+        "errorPresence": 0,
+        "magnitude": 0,
+        "clusterTrust": 0.943743,
+        "variantPenalty": 1
+      },
+      "logContext": [
+        "     2026-08-22T15:21:47.195Z | INFO | http-nio-8080-exec-4 | com.bank.order.OrderController:99 | Order request completed orderId=ORD-13017",
+        "     2026-08-22T15:21:51.869Z | INFO | http-nio-8080-exec-4 | com.bank.payment.PaymentController:30 | Received payment request txnId=PAY-13019",
+        "     2026-08-22T15:21:51.893Z | INFO | http-nio-8080-exec-4 | com.bank.payment.PaymentService:64 | Validating card for txnId=PAY-13019",
+        "     2026-08-22T15:21:52.007Z | INFO | http-nio-8080-exec-4 | com.bank.payment.FraudCheckClient:41 | Running fraud check for txnId=PAY-13019",
+        "     2026-08-22T15:21:52.144Z | INFO | http-nio-8080-exec-4 | com.bank.payment.PaymentGateway:203 | Charging gateway for txnId=PAY-13019",
+        "  >> 2026-08-22T15:21:52.146Z | INFO | http-nio-8080-exec-4 | com.bank.payment.PaymentController:80 | Payment request completed txnId=PAY-13019"
+      ]
+    }
+  ]
+}

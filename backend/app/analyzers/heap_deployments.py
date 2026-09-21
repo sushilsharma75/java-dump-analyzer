@@ -691,7 +691,7 @@ def _build_findings(deployments: List[Deployment], ownership: ThreadOwnership,
                 f"More than one live classloader serves `{dep.artifact or dep.name}`, which means a "
                 "redeploy left the previous one behind. It cannot be collected because threads it "
                 "started are still running — a thread is a GC root, and it keeps its whole "
-                "classloader (and every class and static field in that WAR) alive forever."
+                "classloader (and every class and static field in that WAR) reachable while those threads retain it; deployment lifecycle must establish whether this is stale."
             ),
             impact=(
                 "Every redeploy leaks another full copy of the application's classes and statics. "

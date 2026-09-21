@@ -1,4 +1,6 @@
-import { useState, useRef } from 'react'
+import { DatabaseUpload } from './DatabaseAnalysis'
+import { useState } from 'react'
+import FileUpload from './FileUpload'
 import SourceUpload from './SourceUpload'
 import CaptureGuide from './CaptureGuide'
 
@@ -22,7 +24,8 @@ const TONES = {
 }
 
 export default function Hero({
-  onThreadUpload, onHeapUpload, onHeapPath, onGCUpload,
+  section = 'jvm',
+  onThreadUpload, onHeapUpload, onHeapPath, onGCUpload, onDatabaseUpload,
   sourceSession, onSourceSession,
   loading, error,
 }) {
@@ -36,18 +39,14 @@ export default function Hero({
           <span className="font-mono text-[10px] text-bone-500">v0.2.0</span>
         </div>
         <h1 className="font-display text-5xl md:text-7xl font-light tracking-tightest text-bone-100 leading-[1.02] mb-6">
-          The JVM is misbehaving.<br />
-          <span className="text-bone-400">
-            Find out <em className="not-italic text-flag-warning font-normal">why</em>.
-          </span>
+          {section === 'database' ? 'Database Analyser' : 'JVM Analyser'}
         </h1>
         <p className="text-bone-400 max-w-2xl text-base md:text-lg leading-relaxed">
-          Drop a thread dump, heap dump, or GC log. Get a structured diagnosis — deadlocks,
-          lock contention, pool exhaustion, memory leaks, GC pressure — with concrete
-          remediation steps. Attach your source repo and findings point straight to the line.
+          Deep insights into JVM and database performance
         </p>
       </div>
 
+      {section === 'jvm' && <>
       {/* Source attachment (optional, shown above the dump upload) */}
       <div className="mb-8 animate-slide-up">
         <SourceUpload session={sourceSession} onSession={onSourceSession} />
@@ -90,9 +89,12 @@ export default function Hero({
           onFile={onGCUpload}
           loading={loading}
           tone="ok"
-          description="Reads unified or legacy GC logs. Reports throughput, pause percentiles, and the post-GC live-set trend — the over-time proof of a leak a single heap snapshot can't give."
+          description="Reads unified or legacy GC logs. Reports throughput, pause percentiles, and the post-GC live-set trend — evidence of memory pressure that needs workload and retention context."
         />
       </div>
+
+      </>}
+      {section === 'database' && <DatabaseUpload onUpload={onDatabaseUpload} loading={loading} />}
 
       {error && (
         <div className="panel border-flag-critical/40 bg-flag-critical/5 p-4 mb-12 animate-fade-in">
@@ -103,6 +105,7 @@ export default function Hero({
         </div>
       )}
 
+      {section === 'jvm' && <>
       <div className="border-t border-ink-700/40 pt-12 mt-12">
         <div className="grid md:grid-cols-3 gap-8">
           <Feature
@@ -111,7 +114,7 @@ export default function Hero({
           />
           <Feature
             label="25GB+ heap dumps"
-            text="Streaming parser handles production-scale dumps. Upload progress, parse progress, and ETA all live."
+            text="Disk-backed heap indexing with stage coverage. Benchmark representative large dumps; processing time depends on graph size and shape."
           />
           <Feature
             label="Pattern recognition"
@@ -121,6 +124,7 @@ export default function Hero({
       </div>
 
       <CaptureGuide />
+      </>}
     </div>
   )
 }
@@ -130,28 +134,16 @@ function UploadCard({
   quickOption, onQuickFile, loading, tone, description,
   serverPath, onServerPath,
 }) {
-  const [drag, setDrag] = useState(false)
   const [showPath, setShowPath] = useState(false)
   const [pathInput, setPathInput] = useState('')
-  const inputRef = useRef(null)
-
-  const handleDrop = (e) => {
-    e.preventDefault()
-    setDrag(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file) onFile(file)
-  }
 
   const tc = TONES[tone] || TONES.info
   const toneClasses = tc.hover
-  const dragClasses = drag ? tc.drag : 'border-ink-600/60'
+  const dragClasses = 'border-ink-600/60'
 
   return (
     <div
       className={`panel p-6 md:p-8 transition-all duration-200 group relative overflow-hidden ${toneClasses} ${dragClasses}`}
-      onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
-      onDragLeave={() => setDrag(false)}
-      onDrop={handleDrop}
     >
       <div className="absolute top-4 right-4 label">{tag}</div>
 
@@ -169,33 +161,14 @@ function UploadCard({
       </p>
 
       {!showPath ? (
-        <div className="border border-dashed border-ink-600/60 rounded-lg p-6 text-center bg-ink-950/30">
-          <input
-            ref={inputRef}
-            type="file"
-            accept={accept}
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) onFile(f)
-              e.target.value = ''
-            }}
-          />
-          <div className="text-bone-400 text-sm mb-3">
-            <span className="font-mono text-bone-500">→</span> Drop file or
-          </div>
-          <button
-            onClick={() => inputRef.current?.click()}
-            disabled={loading}
-            className={tc.btn}
-          >
-            {loading ? 'Analyzing…' : 'Choose file'}
-          </button>
+        <div className="text-center">
+          <FileUpload label={title} accept={accept} formats={formats} onFile={onFile} loading={loading} />
 
           {quickOption && (
             <div className="mt-3 text-[10px] font-mono text-bone-500 uppercase tracking-wider">
               for sampling,
               <button
+                disabled={loading}
                 onClick={(e) => {
                   e.preventDefault()
                   const inp = document.createElement('input')
@@ -218,6 +191,7 @@ function UploadCard({
             <div className="mt-3 text-[10px] font-mono text-bone-500 uppercase tracking-wider">
               dump on this server?
               <button
+                disabled={loading}
                 onClick={(e) => { e.preventDefault(); setShowPath(true) }}
                 className="text-flag-info hover:underline ml-1"
               >
@@ -226,9 +200,7 @@ function UploadCard({
             </div>
           )}
 
-          <div className="mt-4 text-[10px] font-mono text-bone-500 tracking-wider">
-            {formats}
-          </div>
+
         </div>
       ) : (
         <div className="border border-dashed border-flag-info/40 rounded-lg p-5 bg-flag-info/[0.03]">
@@ -248,7 +220,7 @@ function UploadCard({
             <button
               onClick={() => onServerPath(pathInput.trim(), false)}
               disabled={loading || !pathInput.trim()}
-              className="btn bg-flag-info/10 text-flag-info border-flag-info/30 hover:bg-flag-info/20 hover:border-flag-info/50 disabled:opacity-50"
+              className="btn-primary"
             >
               Analyze
             </button>

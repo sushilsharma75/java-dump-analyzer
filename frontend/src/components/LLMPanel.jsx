@@ -16,12 +16,13 @@ const MODELS = [
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
 ]
 
-export default function LLMPanel({ analysis, kind }) {
+export default function LLMPanel({ analysis, kind, sourceSession }) {
   // Publish the diagnosis so the exported report can include it — this panel is
   // not the only consumer of what Claude wrote.
   const { setLLM } = useReport()
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
+  const [detail, setDetail] = useState('detailed')
   const [remember, setRemember] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
@@ -62,7 +63,7 @@ export default function LLMPanel({ analysis, kind }) {
         if (model) localStorage.setItem(MODEL_KEY, model)
         else localStorage.removeItem(MODEL_KEY)
       } catch {}
-      const res = await getLLMSummary(analysis, kind, apiKey, model)
+      const res = await getLLMSummary(analysis, kind, apiKey, model, detail, sourceSession?.session_id)
       if (res.error) {
         setError(res.error)
       } else {
@@ -131,6 +132,7 @@ export default function LLMPanel({ analysis, kind }) {
               />
             </div>
 
+            <label className="block text-sm">Report detail <select className="bg-ink-950 border p-2" value={detail} onChange={e => setDetail(e.target.value)}><option value="summary">Summary</option><option value="detailed">Detailed evidence report</option></select></label>
             <div>
               <label className="label block mb-1.5">model</label>
               <select

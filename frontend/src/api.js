@@ -167,11 +167,11 @@ export async function compareThreads(before, after) {
   return res.json();
 }
 
-export async function getLLMSummary(analysis, kind, apiKey, model) {
+export async function getLLMSummary(analysis, kind, apiKey, model, detail = "summary", sourceSession = null) {
   const res = await fetch(`${BASE}/api/llm/summarize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ analysis, kind, api_key: apiKey, model: model || null }),
+    body: JSON.stringify({ analysis, kind, api_key: apiKey, model: model || null, detail, source_session: sourceSession }),
   });
   if (!res.ok) {
     // The backend reports API rejections in the response body, not the status —

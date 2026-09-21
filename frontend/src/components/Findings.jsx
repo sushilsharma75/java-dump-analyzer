@@ -68,7 +68,10 @@ function FindingCard({ f, defaultOpen }) {
       </button>
       {open && (
         <div className="px-5 pb-5 pl-11 space-y-4 animate-fade-in">
+          <p className="text-xs text-bone-400">{f.evidence_id} · {f.conclusion || 'hypothesis'} · confidence: {f.confidence || 'low'}</p>
           <p className="text-sm text-bone-300 leading-relaxed">{f.description}</p>
+          {f.limitations?.map((s, i) => <p className="text-sm text-flag-warning" key={i}>{s}</p>)}
+          {f.verification?.length > 0 && <details><summary>How to verify</summary>{f.verification.map((s, i) => <p key={i} className="text-sm">{s}</p>)}</details>}
 
           {(f.impact || f.likely_cause) && (
             <div className="grid md:grid-cols-2 gap-3">

@@ -81,26 +81,45 @@ def build_stack_groups(threads: List[ThreadInfo], depth: int = 5, min_size: int 
 
 def build_blocked_chains(threads: List[ThreadInfo]) -> List[Dict[str, Any]]:
     """Build chains of 'thread A waiting on lock held by thread B who is waiting on...'."""
-    # Map locked address -> holder thread
-    holder_of: Dict[str, str] = {}
+    def identity(t):
+        return t.tid or t.id or t.nid or t.name
+    holders = {}
     for t in threads:
         for lock in t.held_locks:
-            holder_of[lock.address] = t.name
-
-    chains: List[Dict[str, Any]] = []
+            # Object.wait releases this monitor even if printed as "locked".
+            if not any(l.op == "waiting on" and l.address == lock.address for l in t.locks):
+                holders[lock.address] = t
+        for entry in t.locked_synchronizers:
+            holders[entry.split()[0]] = t
+    chains = []
     for t in threads:
         wanted = t.wanted_lock
-        if not wanted or wanted.op == "parking to wait for":
+        if not wanted or wanted.op == "waiting on":
             continue
-        holder = holder_of.get(wanted.address)
-        if holder and holder != t.name:
-            chains.append({
-                "waiter": t.name,
-                "waiting_for_lock": wanted.address,
-                "lock_class": wanted.class_name,
-                "holder": holder,
-            })
+        owner = holders.get(wanted.address)
+        if owner and identity(owner) != identity(t):
+            chains.append({"waiter": t.name, "holder": owner.name,
+                           "waiter_id": identity(t), "holder_id": identity(owner),
+                           "waiting_for_lock": wanted.address, "lock_class": wanted.class_name})
     return chains
+
+
+def inferred_deadlocks(chains):
+    edges = {c["waiter_id"]: c for c in chains}
+    cycles, emitted = [], set()
+    for start in edges:
+        path, cursor = [], start
+        while cursor in edges and cursor not in path:
+            path.append(cursor)
+            cursor = edges[cursor]["holder_id"]
+        if cursor in path:
+            ids = path[path.index(cursor):]
+            key = frozenset(ids)
+            if key not in emitted:
+                emitted.add(key)
+                names = [edges[i]["waiter"] for i in ids]
+                cycles.append(DeadlockCycle(threads=names, description=" → ".join(names + names[:1])))
+    return cycles
 
 
 def detect_findings(
@@ -118,9 +137,9 @@ def detect_findings(
             severity=Severity.CRITICAL,
             title=f"Java-level deadlock involving {len(dl.threads)} thread(s)",
             description=(
-                f"The JVM reports a deadlock: {dl.description}. "
-                "These threads are permanently stuck waiting on each other's locks. "
-                "The affected work units will never complete."
+                f"A lock ownership cycle is present: {dl.description}. "
+                "These threads form a lock acquisition cycle at capture time. "
+                "Inspect timed acquisition and interruption behavior before concluding the cycle cannot resolve."
             ),
             affected_threads=dl.threads,
             impact=(
@@ -132,7 +151,7 @@ def detect_findings(
                 "Two code paths acquire the same pair of locks in opposite order. Thread A holds lock 1 "
                 "and wants lock 2; thread B holds lock 2 and wants lock 1."
             ),
-            evidence=[f"JVM deadlock detector: {dl.description}"] + [f"thread: {t}" for t in dl.threads[:4]],
+            evidence=[f"Lock ownership cycle: {dl.description}"] + [f"thread: {t}" for t in dl.threads[:4]],
             remediation=(
                 "Establish a consistent lock-acquisition order across the affected code paths, "
                 "or replace synchronized blocks with timed tryLock() to fail fast. "
@@ -254,7 +273,9 @@ def detect_findings(
     # 7. Long blocked chains
     if blocked_chains:
         # Find chains longer than 1 hop
-        chain_map = {bc["waiter"]: bc["holder"] for bc in blocked_chains}
+        chain_map = {bc.get("waiter_id", bc["waiter"]): bc.get("holder_id", bc["holder"]) for bc in blocked_chains}
+        labels = {bc.get("waiter_id", bc["waiter"]): bc["waiter"] for bc in blocked_chains}
+        labels.update({bc.get("holder_id", bc["holder"]): bc["holder"] for bc in blocked_chains})
         for waiter in list(chain_map.keys()):
             chain = [waiter]
             cursor = chain_map.get(waiter)
@@ -262,6 +283,7 @@ def detect_findings(
                 chain.append(cursor)
                 cursor = chain_map.get(cursor)
             if len(chain) >= 3:
+                chain = [labels.get(key, key) for key in chain]
                 findings.append(Finding(
                     severity=Severity.WARNING,
                     title=f"Blocking chain of {len(chain)} threads",
@@ -312,7 +334,7 @@ def build_summary(
     parts: List[str] = []
     parts.append(
         f"This dump contains {total} threads: "
-        f"{runnable} actively running, {blocked} blocked on locks, {waiting} waiting/idle."
+        f"{runnable} RUNNABLE (may include native I/O), {blocked} blocked on locks, {waiting} waiting/idle."
     )
 
     if deadlocks:
@@ -363,14 +385,13 @@ def build_pools(threads: List[ThreadInfo], min_size: int = 3) -> List[PoolInfo]:
                     f"are queueing behind a contended resource.")
         elif busy_pct >= 80:
             health = "busy"
-            note = (f"{busy}/{total} threads are active. The pool is near capacity; "
-                    f"new work will wait if load increases.")
+            note = (f"{busy}/{total} threads are RUNNABLE or BLOCKED. Pool capacity and queue depth are not available from names and states alone.")
         elif busy_pct >= 50:
             health = "busy"
             note = f"{busy}/{total} threads active — moderate load."
         else:
             health = "ok"
-            note = f"Most threads idle ({total - busy}/{total} waiting for work) — normal for a quiet pool."
+            note = f"{total - busy}/{total} threads are waiting. Inspect stacks to distinguish idle workers from dependency waits; capacity is not established by state alone."
 
         pools.append(PoolInfo(
             name=name, total=total, states=dict(states),
@@ -532,8 +553,8 @@ def _build_source_locations_for_finding(
     locations: List[SourceLocation] = []
     seen_keys = set()  # dedupe by (class, method, line)
 
-    for name in finding.affected_threads[:6]:  # cap to keep payload bounded
-        t = threads_by_name.get(name)
+    selected = [t for t in threads_by_name.values() if t.name in finding.affected_threads][:12]
+    for t in selected:  # preserve distinct threads with the same display name
         if not t or not t.stack:
             continue
 
@@ -547,7 +568,7 @@ def _build_source_locations_for_finding(
                     frame_idx = lock.frame_index
                     break
         if frame_idx is None:
-            frame_idx = first_user_frame(t.stack)
+            frame_idx = next((i for i, f in enumerate(t.stack) if source and source.lookup(f.class_name)), first_user_frame(t.stack))
         if frame_idx is None and t.stack:
             frame_idx = 0  # fall back to topmost
 
@@ -565,7 +586,7 @@ def _build_source_locations_for_finding(
             method=frame.method,
             file=frame.file,
             line=frame.line,
-            is_user_code=is_user_code(frame.class_name),
+            is_user_code=bool(source and source.lookup(frame.class_name)) or is_user_code(frame.class_name),
         )
 
         # Resolve through the source index if attached
@@ -596,6 +617,8 @@ def analyze(text: str, source: Optional[SourceIndex] = None) -> ThreadDumpAnalys
 
     stack_groups = build_stack_groups(threads, depth=5, min_size=2)
     blocked_chains = build_blocked_chains(threads)
+    known = {frozenset(d.threads) for d in deadlocks}
+    deadlocks.extend(d for d in inferred_deadlocks(blocked_chains) if frozenset(d.threads) not in known)
     findings = detect_findings(threads, deadlocks, blocked_chains, stack_groups)
 
     # Insight layer: pools, hot threads, stuck I/O
@@ -620,13 +643,46 @@ def analyze(text: str, source: Optional[SourceIndex] = None) -> ThreadDumpAnalys
     findings.sort(key=lambda f: sev_order.get(f.severity, 99))
 
     # Enrich each finding with source locations
-    threads_by_name = {t.name: t for t in threads}
+    threads_by_name = {str(i): t for i, t in enumerate(threads)}
     for f in findings:
         f.source_locations = _build_source_locations_for_finding(
             f, threads_by_name, source
         )
 
+    import re
+    import hashlib
+    from .evidence import stamp
+    from .thread_dump import FRAME_RE
+    frame_lines = [line for line in text.splitlines() if re.match(r"\s*at\s+", line)]
+    rejected = [line.strip() for line in frame_lines if not FRAME_RE.match(line)]
+    coverage = {"frames_seen": len(frame_lines), "frames_parsed": sum(len(t.stack) for t in threads),
+                "frames_rejected": len(rejected), "rejected_examples": rejected[:10]}
+    if not threads:
+        verdict = "invalid"
+        findings = [Finding(severity=Severity.WARNING, category="coverage", title="No recognizable threads",
+                            description="Input is empty or is not a supported thread dump.")]
+        summary = "Invalid thread dump: no threads recognized."
+    elif rejected or not frame_lines:
+        verdict = "insufficient_evidence" if verdict == "healthy" else verdict
+        findings.insert(0, Finding(severity=Severity.WARNING, category="coverage", title="Incomplete stack coverage",
+                                  description=f"{len(rejected)} frame lines rejected; diagnosis may omit relevant work."))
+    for f in findings:
+        if f.category == "deadlock":
+            f.confidence, f.conclusion = "high", "observation"
+        if f.category == "contention":
+            owners = {c["holder"] for c in blocked_chains if c["waiter"] in f.affected_threads}
+            for owner in owners:
+                if owner not in f.affected_threads:
+                    f.affected_threads.append(owner)
+            f.source_locations = _build_source_locations_for_finding(f, threads_by_name, source)
+        for loc in f.source_locations:
+            loc.role = "executing_frame"
+            loc.resolution = "symbol" if loc.repo_path else "unresolved"
+    stamp(findings)
     return ThreadDumpAnalysis(
+        analysis_id=hashlib.sha256(text.encode()).hexdigest(), parse_coverage=coverage,
+        capture={"captured_at": timestamp},
+        source_provenance=source.provenance if source else {},
         timestamp=timestamp,
         jvm=jvm,
         total_threads=len(threads),

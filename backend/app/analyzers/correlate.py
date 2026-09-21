@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Any, Tuple
 
 from ..schemas import Finding, Severity, SourceLocation
 from .source import SourceIndex, is_user_code
+from .evidence import compatibility, stamp
 
 
 def _outer_class(name: str) -> str:
@@ -45,7 +46,7 @@ def _fmt_bytes(n: int) -> str:
     return f"{n:.1f} PB"
 
 
-def _heap_classes_of_interest(heap: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def _heap_classes_of_interest(heap: Dict[str, Any], source=None) -> Dict[str, Dict[str, Any]]:
     """Map outer user-class FQCN -> heap evidence, drawn from the histogram and
     from Phase-1 static leak suspects embedded in heap findings."""
     interest: Dict[str, Dict[str, Any]] = {}
@@ -53,7 +54,7 @@ def _heap_classes_of_interest(heap: Dict[str, Any]) -> Dict[str, Dict[str, Any]]
     def consider(entry: Dict[str, Any]):
         raw = entry.get("class_name") or ""
         outer = _outer_class(raw)
-        if not outer or not is_user_code(outer):
+        if not outer or not (is_user_code(outer) or (source and source.lookup(outer))):
             return
         prev = interest.get(outer)
         cand = {
@@ -83,7 +84,7 @@ def _heap_classes_of_interest(heap: Dict[str, Any]) -> Dict[str, Dict[str, Any]]
             if not loc.get("is_user_code"):
                 continue
             outer = _outer_class(loc.get("class_name") or "")
-            if not outer or not is_user_code(outer):
+            if not outer or not (is_user_code(outer) or (source and source.lookup(outer))):
                 continue
             interest.setdefault(outer, {
                 "class_name": outer, "instance_count": 0,
@@ -95,7 +96,7 @@ def _heap_classes_of_interest(heap: Dict[str, Any]) -> Dict[str, Dict[str, Any]]
     return interest
 
 
-def _index_thread_frames(thread: Dict[str, Any]) -> Dict[str, List[Tuple[str, Dict[str, Any]]]]:
+def _index_thread_frames(thread: Dict[str, Any], source=None) -> Dict[str, List[Tuple[str, Dict[str, Any]]]]:
     """outer user-class -> list of (thread_name, frame) where that class executes."""
     hits: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
     for t in thread.get("threads") or []:
@@ -105,7 +106,7 @@ def _index_thread_frames(thread: Dict[str, Any]) -> Dict[str, List[Tuple[str, Di
             if not cn:
                 continue
             outer = _outer_class(cn)
-            if not is_user_code(outer):
+            if not (is_user_code(outer) or (source and source.lookup(outer))):
                 continue
             hits.setdefault(outer, []).append((tname, fr))
     return hits
@@ -153,7 +154,7 @@ def _allocator_hits(
     for t in thread.get("threads") or []:
         for fr in t.get("stack") or []:
             cn = fr.get("class_name")
-            if not cn or not is_user_code(_outer_class(cn)):
+            if not cn or not (source.lookup(cn) or is_user_code(_outer_class(cn))):
                 continue
             resolved = source.lookup(cn)
             if not resolved:
@@ -182,8 +183,13 @@ def correlate(
     snapshot's dominant class — turning a "this class is big right now" snapshot
     into a "this class is big AND the heap is trending toward OOM" diagnosis.
     """
-    heap_interest = _heap_classes_of_interest(heap)
-    frame_hits = _index_thread_frames(thread)
+    compatible, limitations = compatibility(heap, thread)
+    if not compatible:
+        return {"findings": [Finding(severity=Severity.WARNING, category="coverage",
+                title="Captures cannot be correlated", description=" ".join(limitations)).model_dump()],
+                "summary": "Incompatible or partial captures.", "matched_classes": 0}
+    heap_interest = _heap_classes_of_interest(heap, source)
+    frame_hits = _index_thread_frames(thread, source)
     total_threads = thread.get("total_threads") or len(thread.get("threads") or [])
 
     findings: List[Finding] = []
@@ -206,14 +212,14 @@ def correlate(
         kind = "executing"
         if not hits and source is not None and ref_scans < 6:
             ref_scans += 1
-            hits = _allocator_hits(simple, source, thread)
+            hits = _allocator_hits(outer, source, thread)
             kind = "allocating"
         if not hits:
             continue
 
-        matched.append(outer)
-        if len(matched) > 8:
+        if len(matched) >= 8:
             break
+        matched.append(outer)
 
         tname, fr = _best_frame(hits)
         thread_names = sorted({h[0] for h in hits})
@@ -234,7 +240,7 @@ def correlate(
 
         pct = entry.get("pct_of_total_size")
         dominant = (pct is not None and pct >= 20) or entry["is_static_suspect"]
-        severity = Severity.CRITICAL if dominant else Severity.WARNING
+        severity = Severity.WARNING
 
         frame_ref = f"{loc.class_name}.{loc.method}" + (f":{loc.line}" if loc.line else "")
 
@@ -265,13 +271,11 @@ def correlate(
         suspect_phrase = "is a static leak suspect and " if entry["is_static_suspect"] else ""
         findings.append(Finding(
             severity=severity,
-            title=f"`{simple}` fills the heap and is live on {len(thread_names)} thread(s)",
+            title=f"`{simple}` heap presence overlaps {len(thread_names)} thread stack(s)",
             description=(
                 f"`{outer}` shows up in two independent places: it {suspect_phrase}"
                 f"accounts for {heap_desc} in the heap dump, and {len(thread_names)} "
-                f"thread(s) are currently {rel_phrase}. Two signals pointing at the same "
-                "class is a strong indication this is where the problem lives — and the "
-                "thread frame gives you an exact line to open."
+                f"thread(s) are currently {rel_phrase}. This is a candidate relationship, not proof of allocation or retention at that line."
             ),
             impact=(
                 "Memory is being consumed by this class while it is actively on the hot "
@@ -280,90 +284,33 @@ def correlate(
                 "latency or stalls."
             ),
             likely_cause=(
-                f"The code at {frame_ref} is creating or holding `{simple}` instances "
-                "faster than they're released — an unbounded accumulation, a missing "
-                "limit/pagination, or a cache without eviction."
+                f"Inspect {frame_ref} as a candidate. Workload growth, bounded caching, and unintended retention remain alternative explanations."
             ),
             evidence=evidence,
             remediation=(
                 f"Open {frame_ref} (shown below) and check how `{simple}` is produced or "
                 "retained on this path. Bound the work (paginate, stream, or cap batch "
                 "size), release references when done, or add cache eviction. Because both "
-                "dumps agree, fixing this single spot should move the needle."
+                "dumps provide context, verify a GC-root path before attributing retained objects to this line."
             ),
             category="correlation",
             source_locations=[loc],
         ))
 
-    # Three-pillar marriage: a real GC log proves whether the heap snapshot's
-    # dominant class is part of a genuine upward trend (a leak) vs a big-but-stable
-    # working set. This is the signal a single heap dump structurally cannot give.
-    if gc:
-        trend = gc.get("heap_after_trend_mb_per_min") or 0.0
-        gc_verdict = gc.get("verdict")
-        top = (heap.get("top_classes_by_size") or [None])[0]
-        leak_trend = trend > 1.0 and gc_verdict in ("critical", "degraded")
-        if leak_trend and top:
-            top_name = _simple(top.get("class_name") or "the top class")
-            who = f"`{top_name}`"   # the class actually filling the heap
-            evidence = [
-                f"gc: post-GC live set rising +{trend:.1f} MB/min (verdict {gc_verdict})",
-                f"gc: throughput {gc.get('throughput_pct')}%, {gc.get('full_gc_count')} Full GC(s)",
-                f"heap: dominant class `{top.get('class_name')}` "
-                f"(≈{_fmt_bytes(top.get('shallow_size_bytes', 0))})",
-            ]
-            if matched:
-                evidence.append(f"thread: `{_simple(matched[0])}` live on a stack with a source line")
-            findings.insert(0, Finding(
-                severity=Severity.CRITICAL,
-                title=f"Confirmed memory leak: heap, GC trend, and threads all point at {who}",
-                description=(
-                    "Three independent signals agree. The GC log shows the live set climbing "
-                    f"~{trend:.1f} MB/min after every collection (so the heap is genuinely "
-                    f"trending toward OutOfMemoryError, not just momentarily large); the heap "
-                    f"dump shows `{top.get('class_name')}` dominating that memory" +
-                    (f"; and a thread is live in the code that produces/holds {who}, giving "
-                     "you an exact line to open." if matched else ".")
-                ),
-                impact=(
-                    "Left alone this ends in OutOfMemoryError. As the heap fills, GC runs more "
-                    "often for less, throughput drops, and latency spikes — then the JVM dies."
-                ),
-                likely_cause=(
-                    f"{who} is accumulating without bound — a cache/registry/collection that's "
-                    "added to but never evicted or cleared."
-                ),
-                evidence=evidence,
-                remediation=(
-                    "This is the one to fix first: all three artifacts agree. Bound or evict "
-                    "the structure holding these instances; if the live set is legitimately "
-                    "this large and growing, the app needs more than -Xmx can give it."
-                ),
-                category="correlation",
-                source_locations=findings[0].source_locations if (matched and findings) else [],
-            ))
-
-    # Bonus: GC CPU pressure (thread dump) confirming heap fill (heap dump).
-    gc_findings = [f for f in (thread.get("findings") or []) if f.get("category") == "gc"]
-    if not gc and gc_findings and (heap.get("verdict") in ("critical", "degraded")):
-        top = (heap.get("top_classes_by_size") or [None])[0]
-        top_txt = (f" The heap is led by `{top['class_name']}` "
-                   f"(≈{_fmt_bytes(top.get('shallow_size_bytes', 0))})." if top else "")
-        findings.append(Finding(
-            severity=Severity.WARNING,
-            title="GC CPU pressure in the thread dump matches a filling heap",
-            description=(
-                "The thread dump shows garbage-collection threads burning significant "
-                "CPU, and the heap dump independently looks unhealthy. Together these "
-                "confirm real memory pressure rather than a transient blip." + top_txt
-            ),
-            impact="Application threads are repeatedly paused for GC; latency gets spiky and throughput drops as the heap approaches its limit.",
-            likely_cause="The live set is growing toward -Xmx (often a leak), so GC runs more and more often for less and less reclaimed memory.",
-            evidence=[f"thread: {f.get('title')}" for f in gc_findings[:3]]
-                     + [f"heap verdict: {heap.get('verdict')}"],
-            remediation="Treat the top heap consumers above as the priority. Confirm with GC logs (-Xlog:gc*); if the live set is legitimately large, raise -Xmx, otherwise fix the accumulation.",
-            category="correlation",
-        ))
+    # A global occupancy trend cannot identify a particular leaking class.
+    gc_compatible, gc_limits = compatibility(heap, gc) if gc else (True, [])
+    if gc and not gc_compatible:
+        findings.append(Finding(severity=Severity.WARNING, category="coverage", title="GC log cannot be correlated", description=" ".join(gc_limits)))
+    if gc and gc_compatible and (gc.get("heap_after_trend_mb_per_min") or 0) > 1:
+        findings.append(Finding(severity=Severity.WARNING, category="correlation",
+            title="GC occupancy trend adds memory-pressure context",
+            description="Post-collection occupancy rises in the supplied GC log. This does not prove a leak or identify the class causing growth.",
+            evidence=[f"post-GC trend: {gc['heap_after_trend_mb_per_min']} MB/min"],
+            limitations=["GC capture identity and window must match the incident; young/mixed collections do not establish a full live-set baseline."],
+            remediation="Compare complete heap histograms and retained ownership across compatible captures and a representative GC window."))
+    elif not gc and any(f.get("category") == "gc" for f in thread.get("findings", [])):
+        findings.append(Finding(severity=Severity.INFO, category="correlation", title="GC CPU observation needs a GC log",
+                                description="Lifetime GC CPU and a heap snapshot do not establish current leak growth."))
 
     if not findings:
         findings.append(Finding(
@@ -391,6 +338,12 @@ def correlate(
         + (f" — start with `{_simple(matched[0])}`." if matched else ".")
     )
 
+    for f in findings:
+        f.limitations.extend(limitations)
+        for loc in f.source_locations:
+            loc.role = "executing_frame"
+            loc.resolution = "lexical_symbol" if loc.repo_path else "unresolved"
+    stamp(findings)
     return {
         "findings": [f.model_dump() for f in findings],
         "summary": summary,

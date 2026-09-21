@@ -13,6 +13,7 @@ export default function SourceSnippet({ location, compact = false }) {
         <span className={`badge ${is_user_code ? 'badge-warning' : 'badge-neutral'}`}>
           {is_user_code ? 'user code' : 'library'}
         </span>
+        <span className="text-xs text-bone-400">{location.role || "candidate"} · {location.build_verified ? "build matched" : "build unverified"}</span>
         {repo_path ? (
           <span className="font-mono text-[11px] text-bone-200 truncate">
             {repo_path}

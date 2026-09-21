@@ -70,6 +70,7 @@ public final class Main {
                 case "validate" -> validate(new Args(argv, 1));
                 case "explain" -> explain(new Args(argv, 1));
                 case "detect-format" -> detectFormat(new Args(argv, 1));
+                case "serve" -> serve(new Args(argv, 1));
                 case "-h", "--help", "help" -> usage();
                 default -> {
                     System.err.println("unknown command: " + cmd);
@@ -579,6 +580,23 @@ public final class Main {
         System.out.println("(ranking, dedup and report land in Phase 6 `tfa analyze`.)");
     }
 
+    // -- tfa serve [--port 8080] --------------------------------------------
+
+    private static void serve(Args args) {
+        int port = args.getInt("port", 8080);
+        String jar = args.get("jar", null);
+        try {
+            WebServer.start(port, jar == null ? null : Path.of(jar));
+            Thread.currentThread().join();   // keep the process alive
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            System.err.println("could not start web UI: " + e.getMessage());
+            System.err.println("If running from classes (not the shaded jar), pass --jar <path-to-tfa.jar>.");
+            System.exit(1);
+        }
+    }
+
     // -- tfa detect-format <file> -------------------------------------------
 
     private static void detectFormat(Args args) {
@@ -672,6 +690,9 @@ public final class Main {
 
                   tfa explain <dir> --config <yaml> --thread <id> --at <timestamp>
                       Print the full reasoning trail for one episode.
+
+                  tfa serve [--port 8080]
+                      Start a local web UI to run the pipeline and view the report.
 
                   tfa detect-format <file> [--sample 500]
                       Sample a file and print a proposed format profile as YAML.

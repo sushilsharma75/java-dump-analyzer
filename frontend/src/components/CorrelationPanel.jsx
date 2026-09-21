@@ -6,7 +6,7 @@ import { correlateDumps } from '../api'
 /**
  * Cross-dump correlation. Appears once the user has analyzed BOTH a thread dump
  * and a heap dump in this session. Intersects heap-dominant app classes with
- * live thread stack frames to produce double-confirmed, line-precise findings.
+ * live thread stack frames to produce candidate relationships with evidence.
  */
 export default function CorrelationPanel({ heap, thread, gc, sourceSession }) {
   const [state, setState] = useState('idle') // idle | loading | done | error
@@ -20,9 +20,6 @@ export default function CorrelationPanel({ heap, thread, gc, sourceSession }) {
   // still re-issuing the request on a real remount (e.g. StrictMode's mount/
   // unmount/mount in dev), so the in-flight result is never orphaned by a stale
   // cleanup flag.
-  const key = heap && thread
-    ? `${heap.file_size_bytes}|${heap.total_instances}|${thread.total_threads}|${gc?.gc_count ?? ''}|${gc?.heap_after_trend_mb_per_min ?? ''}|${sourceSession?.session_id || ''}`
-    : null
 
   useEffect(() => {
     if (!heap || !thread) return
@@ -32,7 +29,7 @@ export default function CorrelationPanel({ heap, thread, gc, sourceSession }) {
       .then((r) => { if (!cancelled) { setResult(r); setState('done') } })
       .catch((e) => { if (!cancelled) { setError(e.message); setState('error') } })
     return () => { cancelled = true }
-  }, [key])
+  }, [heap, thread, gc, sourceSession?.session_id])
 
   if (!heap || !thread) return null
 
@@ -74,7 +71,7 @@ export default function CorrelationPanel({ heap, thread, gc, sourceSession }) {
           {result?.findings?.length > 0 && <Findings findings={result.findings} />}
           {/* Unified AI diagnosis: synthesize heap + thread + correlation into a
               single Problem→Evidence→Location→Fix write-up for an entry-level dev. */}
-          <LLMPanel analysis={{ heap, thread, gc, correlation: result }} kind="unified" />
+          <LLMPanel analysis={{ heap, thread, gc, correlation: result }} kind="unified" sourceSession={sourceSession} />
         </div>
       )}
     </section>

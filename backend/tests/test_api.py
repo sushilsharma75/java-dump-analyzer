@@ -83,3 +83,49 @@ def test_heap_rejects_thread_dump(client):
         data={"quick": "false"},
     )
     assert r.status_code == 500  # analysis error surfaced as 500 with a helpful message
+
+
+def test_persistent_object_investigation(client, tmp_path, monkeypatch):
+    from app import artifacts
+    monkeypatch.setattr(artifacts, 'ROOT', tmp_path)
+    b=HprofBuilder();leaf=b.load_class('sample.Leaf');holder=b.load_class('sample.Holder')
+    b.class_dump(leaf);b.class_dump(holder,instance_fields=[('value',b.OBJECT)])
+    child=b.instance(leaf);owner=b.instance(holder,refs=[child]);b.gc_root(owner)
+    response=client.post('/api/analyze/heap',files={'file':('valid.hprof',b.build(),'application/octet-stream')})
+    assert response.status_code==200
+    data=response.json();identifier=data['analysis_id']
+    assert data['object_index_id']==identifier
+    assert client.get(f'/api/analyses/{identifier}').json()['analysis']['histogram_complete']
+    assert client.get(f'/api/heap/{identifier}/objects?class_name=sample.Leaf').status_code==200
+    detail=client.get(f'/api/heap/{identifier}/objects/{hex(child)}').json()
+    assert any(e['field']=='sample.Holder.value' for e in detail['incoming'])
+    paths=client.get(f'/api/heap/{identifier}/objects/{hex(child)}/roots').json()
+    assert paths['paths']
+    assert client.get(f'/api/heap/{identifier}/objects?limit=10000').status_code==422
+    assert client.post(f'/api/analyses/{identifier}/capture',json={'captured_at':'invalid'}).status_code==422
+    assert client.post(f'/api/analyses/{identifier}/capture',json={'process_id':'jvm1','captured_at':'2026-09-21T12:00:00+00:00'}).status_code==200
+    assert client.delete(f'/api/analyses/{identifier}').json()['deleted']
+    assert not (tmp_path/(identifier+'.sqlite')).exists()
+    assert client.get(f'/api/heap/{identifier}/objects').status_code==404
+
+
+def test_source_manifest_build_matching(client, tmp_path, monkeypatch):
+    import json
+    from app import artifacts
+    from app.analyzers.source import SourceIndex
+    root=tmp_path/'src';root.mkdir()
+    (root/'App.java').write_text('class App { void run() {} }')
+    idx=SourceIndex(root);idx.build()
+    (root/'postmortem-source.json').write_text(json.dumps({'build_id':'release-1','source_sha256':idx.provenance['content_sha256']}))
+    monkeypatch.setattr(artifacts,'ROOT',tmp_path)
+    session=client.post('/api/source/path',json={'path':str(root)}).json()['session_id']
+    text='"main" #1 tid=0x1 nid=0x1 runnable\n java.lang.Thread.State: RUNNABLE\n at App.run(App.java:1)\n'
+    analysis=client.post('/api/analyze/thread',files={'file':('t.txt',text)},data={'source_session':session}).json()
+    identifier=analysis['analysis_id']
+    updated=client.post(f'/api/analyses/{identifier}/capture',json={'build_id':'release-1'}).json()
+    assert updated['source_provenance']['build_verified']
+    changed=client.post(f'/api/analyses/{identifier}/capture',json={'build_id':'release-2'}).json()
+    assert not changed['source_provenance']['build_verified']
+    (root/'App.java').write_text('class App { void changed() {} }')
+    idx=SourceIndex(root);idx.build()
+    assert idx.provenance['manifest_valid'] is False

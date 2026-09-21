@@ -133,7 +133,7 @@ class _WasteScanner:
         allocated = self.model.prim_array_size(nbytes, 1)
         self.arrays_seen += 1
         self.bytes_in_arrays += allocated
-        h = hashlib.blake2b(data, digest_size=16).digest()
+        h = (etype, hashlib.blake2b(data, digest_size=16).digest())
         g = self.groups.get(h)
         if g is not None:
             g[0] += 1
@@ -227,7 +227,7 @@ def find_wasted_memory(
             f"{redundant_copies:,} redundant copies of {dup_value_count:,} distinct "
             f"array values (the backing stores of Strings and buffers) are sitting in the "
             f"heap. This isn't a leak — it's the same content stored many times over, and "
-            f"it's directly reclaimable by de-duplicating." + capped_note
+            f"this is potential duplication, not guaranteed reclaimable memory; mutable buffers may require distinct copies." + capped_note
         ),
         impact=(
             "Pure waste: memory that could be freed with no behavior change. It inflates the "

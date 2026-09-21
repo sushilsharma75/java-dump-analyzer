@@ -6,7 +6,7 @@ def _heap(classes):
     """classes: list of (name, count, bytes) -> a minimal serialized heap analysis."""
     entries = [{"class_name": n, "instance_count": c, "shallow_size_bytes": b}
                for n, c, b in classes]
-    return {"top_classes_by_size": entries, "top_classes_by_count": entries}
+    return {"histogram": entries, "histogram_complete": True, "top_classes_by_size": entries, "top_classes_by_count": entries}
 
 
 def test_heap_grower_is_flagged_as_leak_suspect():
@@ -15,7 +15,7 @@ def test_heap_grower_is_flagged_as_leak_suspect():
     after = _heap([("com.example.Order", 9000, 900_000),     # 9x growth
                    ("java.lang.String", 5200, 205_000)])
     r = compare_heaps(before, after)
-    assert r["verdict"] == "critical"
+    assert r["verdict"] == "degraded"
     top = r["growers"][0]
     assert top["class_name"] == "com.example.Order"
     assert top["bytes_delta"] == 800_000
@@ -64,7 +64,7 @@ def test_persistently_stuck_thread_flagged_critical():
     before = _thread([("worker-1", "BLOCKED", frames), ("worker-2", "RUNNABLE", [("X", "run", 1)])])
     after = _thread([("worker-1", "BLOCKED", frames), ("worker-2", "RUNNABLE", [("Y", "run", 2)])])
     r = compare_threads(before, after)
-    assert r["verdict"] == "critical"               # worker-1 stuck + BLOCKED
+    assert r["verdict"] == "degraded"               # worker-1 stuck + BLOCKED
     assert len(r["stuck_threads"]) == 1
     assert r["stuck_threads"][0]["name"] == "worker-1"
     assert r["stuck_threads"][0]["blocked"] is True

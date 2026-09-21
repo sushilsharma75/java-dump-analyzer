@@ -109,13 +109,12 @@ function llmSection(llm) {
 
 function coverageSection(a) {
   const skipped = a.skipped_analyses || []
-  if (!a.truncated && skipped.length === 0) return ''
+  if (!a.truncated && skipped.length === 0 && !a.stages?.length && !a.parse_coverage) return ''
   const bits = []
   if (a.truncated) {
     bits.push(`<p class="warn"><strong>Partial analysis.</strong> Only
       ${esc(fmtBytes(a.analyzed_bytes))} of this ${esc(fmtBytes(a.file_size_bytes))}
-      dump was read (quick mode). Every count and percentage in this report describes
-      that prefix, not the whole heap.</p>`)
+      dump was read or recognized. Counts describe the covered input, not necessarily the whole heap.</p>`)
   }
   if (skipped.length) {
     bits.push(`<p>Stages that did not run on this dump:</p><ul>${
@@ -125,6 +124,11 @@ function coverageSection(a) {
         }</li>`).join('')
     }</ul>`)
   }
+  if (a.stages?.length) bits.push(table(['Stage', 'Status', 'Reason'], a.stages.map(s => [esc(s.stage), esc(s.status), esc(s.reason || '')])))
+  if (a.parse_coverage) bits.push(`<pre>${esc(JSON.stringify(a.parse_coverage, null, 2))}</pre>`)
+  if (a.sizing_assumptions?.length) bits.push(`<ul>${a.sizing_assumptions.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`)
+  if (a.capture) bits.push(`<h3>Capture metadata</h3><pre>${esc(JSON.stringify(a.capture, null, 2))}</pre>`)
+  if (a.source_provenance) bits.push(`<h3>Source provenance</h3><pre>${esc(JSON.stringify(a.source_provenance, null, 2))}</pre>`)
   return `<section class="coverage"><h2>Coverage</h2>${bits.join('\n')}</section>`
 }
 
@@ -133,7 +137,9 @@ function coverageSection(a) {
 function findingsSection(findings) {
   if (!findings?.length) return ''
   const cards = findings.map((f) => {
-    const parts = [`<p>${inlineHtml(f.description || '')}</p>`]
+    const parts = [`<p>${esc(f.evidence_id || '')} · ${esc(f.conclusion || 'hypothesis')} · confidence: ${esc(f.confidence || 'low')}</p>`, `<p>${inlineHtml(f.description || '')}</p>`]
+    if (f.limitations?.length) parts.push(`<p>Limitations</p><ul>${f.limitations.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`)
+    if (f.verification?.length) parts.push(`<p>How to verify</p><ul>${f.verification.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`)
     if (f.impact) parts.push(`<p><span class="k">Impact</span> ${inlineHtml(f.impact)}</p>`)
     if (f.likely_cause) parts.push(`<p><span class="k">Likely cause</span> ${inlineHtml(f.likely_cause)}</p>`)
     if (f.evidence?.length) {
@@ -145,7 +151,7 @@ function findingsSection(findings) {
       const where = loc.repo_path
         ? `${loc.repo_path}:${loc.line ?? '?'}`
         : `${loc.class_name}.${loc.method}${loc.line ? `:${loc.line}` : ''}`
-      parts.push(`<p class="loc">${esc(where)}</p>`)
+      parts.push(`<p class="loc">${esc(where)} · ${esc(loc.role || "candidate")} · ${loc.build_verified ? "declared build matched" : "build unverified"}</p>`)
       if (loc.snippet?.lines?.length) {
         const start = loc.snippet.start_line
         parts.push(`<pre class="snippet">${loc.snippet.lines.map((line, k) => {
@@ -418,7 +424,7 @@ export function buildReportHTML({ kind, filename, analysis, llm, generatedAt }) 
     kind === 'thread' ? threadBody(a) :
     kind === 'gc' ? gcBody(a) : ''
 
-  const title = `POSTMORTEM — ${label}${filename ? ` — ${filename}` : ''}`
+  const title = `Stack Analyser — ${label}${filename ? ` — ${filename}` : ''}`
 
   return `<!doctype html>
 <html lang="en"><head>
@@ -428,7 +434,7 @@ export function buildReportHTML({ kind, filename, analysis, llm, generatedAt }) 
 <style>${CSS}</style>
 </head><body><main>
 <header>
-  <h1>POSTMORTEM — ${esc(label)}</h1>
+  <h1>Stack Analyser — ${esc(label)}</h1>
   <div class="meta">
     ${filename ? `<code>${esc(filename)}</code> · ` : ''}generated ${esc(when.toISOString().replace('T', ' ').replace(/\..+/, ' UTC'))}
   </div>
@@ -445,7 +451,7 @@ ${findingsSection(a.findings)}
 ${body}
 
 <footer>
-  Produced by POSTMORTEM. Ranked tables show the top ${TOP_N} entries; the full
+  Produced by Stack Analyser. Ranked tables show the top ${TOP_N} entries; the full
   data stays in the workbench session. Shallow sizes use the
   ${esc(a.sizing_model || 'assumed')} object layout — hprof does not record object
   headers, so that part is inferred, not measured.
@@ -462,7 +468,7 @@ export function downloadReport({ kind, filename, analysis, llm }) {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')
   const link = document.createElement('a')
   link.href = url
-  link.download = `postmortem-${kind}-${stem}-${stamp}.html`
+  link.download = `stack-analyser-${kind}-${stem}-${stamp}.html`
   document.body.appendChild(link)
   link.click()
   link.remove()

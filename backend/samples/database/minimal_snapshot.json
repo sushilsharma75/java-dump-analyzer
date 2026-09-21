@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "engine": "postgres",
+    "version": "0.1.0",
+    "server_version": "15.7",
+    "collected_at": "2026-07-05T12:00:00Z",
+    "host_alias": "a1b2c3d4e5f6",
+    "is_delta": false,
+    "delta_interval_seconds": null,
+    "db_size_bytes": 1073741824,
+    "capabilities": ["query_stats", "io_timing", "lock_waits"],
+    "capability_notes": []
+  },
+  "queries": [
+    {
+      "query_digest": "8437942600665968477",
+      "normalized_sql": "SELECT id, status, total_cents FROM orders WHERE customer_id = ?",
+      "calls": 4133,
+      "total_time_ms": 6300.9,
+      "mean_time_ms": 1.52,
+      "rows_returned": 8266,
+      "rows_examined": null,
+      "full_scan_flag": null,
+      "p95_time_ms": null,
+      "p99_time_ms": null,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    },
+    {
+      "query_digest": "d1e8a70b5ccab1dc",
+      "normalized_sql": "SELECT `id`, `email` FROM `users` WHERE `id` = ?",
+      "calls": 19430,
+      "total_time_ms": 2837.5,
+      "mean_time_ms": 0.15,
+      "rows_returned": 19430,
+      "rows_examined": 19430,
+      "full_scan_flag": false,
+      "p95_time_ms": 0.31,
+      "p99_time_ms": 0.55,
+      "calls_per_day": null,
+      "time_per_day_ms": null,
+      "delta_low_confidence": null
+    }
+  ],
+  "tables": [
+    {
+      "schema_name": "public",
+      "name": "orders",
+      "size_bytes": 314572800,
+      "row_estimate": 2000000,
+      "seq_scans": 4200,
+      "full_scan_rows_read": null,
+      "dead_tuple_ratio": 0.03,
+      "last_autovacuum": "2026-07-04T22:10:00Z",
+      "data_free_bytes": null,
+      "growth_30d_pct": null
+    }
+  ],
+  "indexes": [
+    {
+      "table": "public.users",
+      "name": "users_email_dup_idx",
+      "definition": "CREATE INDEX users_email_dup_idx ON public.users USING btree (email)",
+      "size_bytes": 52428800,
+      "scans": 0,
+      "is_primary": false,
+      "is_unique": false,
+      "is_duplicate_candidate": true,
+      "is_unused_candidate": true
+    }
+  ],
+  "sessions": [
+    {
+      "session_id": "4242",
+      "state": "active",
+      "query_digest": "8437942600665968477",
+      "age_seconds": 1.2
+    }
+  ],
+  "lock_waits": [
+    {
+      "blocker_digest": "7f3d9a1c2b4e6f80",
+      "blocked_digest": "0a1b2c3d4e5f6a7b",
+      "wait_ms": 6100.0
+    }
+  ],
+  "connections": {
+    "current": 12,
+    "peak": null,
+    "max_limit": 100
+  },
+  "settings": [
+    {
+      "name": "shared_buffers",
+      "value": "16384",
+      "unit": "8kB"
+    },
+    {
+      "name": "max_connections",
+      "value": "100",
+      "unit": null
+    }
+  ]
+}

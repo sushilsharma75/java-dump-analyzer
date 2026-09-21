@@ -1,5 +1,5 @@
 /* ============================================================================
- * POSTMORTEM — plain CSS stylesheet
+ * Stack Analyser — plain CSS stylesheet
  * No Tailwind, no PostCSS. Hand-written utility classes that mirror the
  * Tailwind class names the JSX already uses, plus the component classes
  * (.panel, .badge, .btn, etc.) that the original stylesheet defined.
@@ -133,13 +133,14 @@ pre, code { font-family: var(--font-mono); }
   font-variant-numeric: tabular-nums;
 }
 
-.btn {
+.btn, .btn-primary, .btn-secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 8px 16px;
-  border-radius: 6px;
+  min-height: 42px;
+  padding: 10px 18px;
+  border-radius: 8px;
   font-family: var(--font-mono);
   font-size: 12px;
   text-transform: uppercase;
@@ -621,4 +622,78 @@ input[type=text]::placeholder, input[type=password]::placeholder { color: var(--
   background: var(--ink-800);
   border-radius: 4px;
   color: var(--flag-info);
+}
+
+/* Stack Analyser product navigation */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.875rem 2rem;
+}
+.app-brand { display: flex; flex-direction: column; gap: 0.25rem; text-align: left; }
+.app-brand .label { text-transform: none; letter-spacing: normal; line-height: 1.5; }
+.analyser-nav { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.analyser-nav-button {
+  padding: 0.625rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: #aaa69d;
+  background: transparent;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.analyser-nav-button:hover, .analyser-nav-button.active {
+  color: #e9c46a;
+  background: rgba(233, 196, 106, 0.08);
+  border-color: rgba(233, 196, 106, 0.35);
+}
+.analyser-nav-button:focus-visible { outline: 2px solid #e9c46a; outline-offset: 3px; }
+.analyser-nav-button:disabled { opacity: 0.5; cursor: wait; }
+@media (max-width: 640px) {
+  .app-header { padding: 0.875rem 1rem; }
+  .analyser-nav { width: 100%; }
+  .analyser-nav-button { flex: 1; padding-inline: 0.5rem; }
+}
+
+/* Shared upload and action styling for JVM and database workflows. */
+.btn:focus-visible, .btn-primary:focus-visible, .btn-secondary:focus-visible {
+  outline: 2px solid var(--flag-warning);
+  outline-offset: 3px;
+}
+.btn:disabled, .btn-primary:disabled, .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+.file-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 250px;
+  padding: 28px 20px;
+  border: 1px dashed var(--ink-600);
+  border-radius: 12px;
+  background: linear-gradient(150deg, rgba(var(--flag-warning-rgb), 0.035), transparent 70%), var(--ink-950);
+  text-align: center;
+  transition: border-color 150ms, background 150ms;
+}
+.file-upload:hover:not(.is-disabled), .file-upload:focus-within, .file-upload.is-dragging {
+  border-color: var(--flag-warning);
+  background-color: var(--ink-900);
+}
+.file-upload-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; border-radius: 12px;
+  color: var(--flag-warning); background: rgba(var(--flag-warning-rgb), 0.08);
+}
+.file-upload-label { color: var(--bone-100); font-size: 14px; font-weight: 500; }
+.file-upload-hint { color: var(--bone-400); font-size: 13px; overflow-wrap: anywhere; max-width: 100%; }
+.file-upload-formats { color: var(--bone-500); font-family: var(--font-mono); font-size: 10px; line-height: 1.6; }
+.file-upload-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.database-upload-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
+.database-upload-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
+@media (max-width: 640px) {
+  .database-upload-grid { grid-template-columns: 1fr; }
+  .database-upload-footer > .btn-primary { width: 100%; }
 }

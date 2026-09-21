@@ -35,8 +35,11 @@ public final class StreamingSegmenter {
         Map<String, ThreadSegmenter> open = new HashMap<>();
         try (records) {
             records.forEach(r -> {
-                String threadId = r.threadId();
-                ThreadSegmenter seg = open.computeIfAbsent(threadId, strategy::newThreadSegmenter);
+                String key = strategy.groupingKey(r);
+                if (key == null) {
+                    return;   // record belongs to no flow (e.g. no correlation id)
+                }
+                ThreadSegmenter seg = open.computeIfAbsent(key, strategy::newThreadSegmenter);
                 List<Episode> closed = seg.accept(r);
                 for (Episode e : closed) {
                     sink.accept(e);

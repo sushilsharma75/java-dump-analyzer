@@ -1,6 +1,6 @@
 """Pydantic schemas for API requests/responses."""
 from __future__ import annotations
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -21,12 +21,27 @@ class Severity(str, Enum):
     CRITICAL = "critical"
 
 
+class CaptureMetadata(BaseModel):
+    process_id: Optional[str] = None
+    process_start: Optional[str] = None
+    captured_at: Optional[str] = None
+    build_id: Optional[str] = None
+
+
+class AnalysisStage(BaseModel):
+    stage: str
+    status: Literal["completed", "partial", "skipped", "failed"]
+    reason: Optional[str] = None
+
+
 class StackFrame(BaseModel):
     class_name: str
     method: str
     file: Optional[str] = None
     line: Optional[int] = None
     is_native: bool = False
+    module: Optional[str] = None
+    class_loader: Optional[str] = None
 
     @property
     def signature(self) -> str:
@@ -98,10 +113,18 @@ class SourceLocation(BaseModel):
     # Set when a source repo is attached
     repo_path: Optional[str] = None   # file path relative to repo root
     snippet: Optional[SourceSnippet] = None
+    role: str = "candidate"
+    resolution: str = "unverified"
+    build_verified: bool = False
 
 
 class Finding(BaseModel):
     """A single diagnostic observation."""
+    evidence_id: str = ""
+    confidence: Literal["low", "medium", "high"] = "low"
+    conclusion: Literal["observation", "hypothesis"] = "hypothesis"
+    limitations: List[str] = Field(default_factory=list)
+    verification: List[str] = Field(default_factory=list)
     severity: Severity
     title: str
     description: str
@@ -139,6 +162,10 @@ class HotThread(BaseModel):
 
 
 class ThreadDumpAnalysis(BaseModel):
+    analysis_id: str = ""
+    capture: CaptureMetadata = Field(default_factory=CaptureMetadata)
+    parse_coverage: Dict[str, Any] = Field(default_factory=dict)
+    source_provenance: Dict[str, Any] = Field(default_factory=dict)
     timestamp: Optional[str] = None
     jvm: Optional[str] = None
     total_threads: int
@@ -223,14 +250,16 @@ class ThreadOwnership(BaseModel):
 
 class DominatorEntry(BaseModel):
     """One top-level entry of the dominator tree: an object no other single object
-    retains. Collecting it would free exactly `retained_bytes` — the number MAT's
-    'Biggest Objects' pie is made of."""
+    retains. `retained_bytes` sums modeled shallow sizes in the selected
+    strong-reference graph; JVM layout assumptions remain explicit."""
     class_name: str
     object_id: str                          # hex object id within this dump
     shallow_bytes: int
     retained_bytes: int
     pct_of_reachable: float                 # share of all reachable heap bytes
     chain: List[str] = Field(default_factory=list)  # accumulation path downward (class names)
+    accumulation_object_id: Optional[str] = None
+    root_paths: Dict[str, Any] = Field(default_factory=dict)
 
 
 class DuplicateClass(BaseModel):
@@ -249,12 +278,21 @@ class SkippedAnalysis(BaseModel):
     partially-analysed 25GB dump is indistinguishable from a fully-analysed one —
     so the result always states which stages were skipped and how to enable them.
     """
+    status: str = "skipped"
     stage: str            # e.g. "dominator tree (exact retained sizes)"
     reason: str           # human-readable: what tripped the gate
     enable_hint: Optional[str] = None   # env var / capture change that would run it
 
 
 class HeapDumpAnalysis(BaseModel):
+    analysis_id: str = ""
+    capture: CaptureMetadata = Field(default_factory=CaptureMetadata)
+    stages: List[AnalysisStage] = Field(default_factory=list)
+    histogram: List[ClassHistogramEntry] = Field(default_factory=list)
+    histogram_complete: bool = False
+    source_provenance: Dict[str, Any] = Field(default_factory=dict)
+    object_index_id: Optional[str] = None
+    sizing_assumptions: List[str] = Field(default_factory=list)
     header: str
     identifier_size: int
     timestamp_ms: Optional[int] = None
@@ -280,7 +318,7 @@ class HeapDumpAnalysis(BaseModel):
     wasted_bytes_estimate: Optional[int] = None   # reclaimable duplicate-array bytes
     deployments: List[Deployment] = Field(default_factory=list)
     thread_ownership: Optional[ThreadOwnership] = None
-    # Dominator-tree results (exact retained sizes; gated by dump size)
+    # Dominator-tree results (graph sums under the selected layout model)
     dominators: List[DominatorEntry] = Field(default_factory=list)
     reachable_bytes: Optional[int] = None
     unreachable_instances: Optional[int] = None   # objects in the dump no GC root reaches
@@ -306,6 +344,8 @@ class GCEvent(BaseModel):
 
 
 class GCLogAnalysis(BaseModel):
+    analysis_id: str = ""
+    capture: CaptureMetadata = Field(default_factory=CaptureMetadata)
     collector: str                       # G1 | Parallel | CMS | Serial | ZGC | Shenandoah | Unknown
     jdk_logging: str                     # "unified" | "legacy"
     duration_s: float
@@ -353,6 +393,8 @@ class ClassDelta(BaseModel):
 
 
 class HeapComparison(BaseModel):
+    coverage: str = "partial"
+    limitations: List[str] = Field(default_factory=list)
     total_bytes_before: int
     total_bytes_after: int
     bytes_growth: int
@@ -368,9 +410,14 @@ class StuckThread(BaseModel):
     state: str
     top_frame: str
     blocked: bool = False
+    identity: str = ""
+    cpu_delta_ms: Optional[float] = None
+    interval_s: Optional[float] = None
+    classification: str = "persistent"
 
 
 class ThreadComparison(BaseModel):
+    limitations: List[str] = Field(default_factory=list)
     stuck_threads: List[StuckThread] = Field(default_factory=list)
     findings: List[Finding] = Field(default_factory=list)
     summary: str = ""
@@ -389,6 +436,8 @@ class ThreadCompareRequest(BaseModel):
 
 
 class LLMSummaryRequest(BaseModel):
+    detail: Literal["summary", "detailed"] = "summary"
+    source_session: Optional[str] = None
     analysis: Dict[str, Any]  # serialized ThreadDumpAnalysis or HeapDumpAnalysis
     kind: str  # "thread" | "heap" | "gc" | "unified"
     api_key: Optional[str] = None  # user-supplied; optional

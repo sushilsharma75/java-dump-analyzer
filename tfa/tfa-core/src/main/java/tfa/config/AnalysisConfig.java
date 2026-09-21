@@ -184,7 +184,9 @@ public final class AnalysisConfig {
         Set<String> entries = asStringSet(seg.get("entryCallSites"));
         Set<String> terminals = asStringSet(seg.get("terminalCallSites"));
         long idleGap = asLong(seg.get("idleGapMillis"), 5000L);
-        return new SegmentationConfig(strategy, entries, terminals, idleGap);
+        Object corr = seg.get("correlationIdPattern");
+        String correlationIdPattern = corr == null ? "" : String.valueOf(corr);
+        return new SegmentationConfig(strategy, entries, terminals, idleGap, correlationIdPattern);
     }
 
     // -- small YAML coercion helpers ----------------------------------------

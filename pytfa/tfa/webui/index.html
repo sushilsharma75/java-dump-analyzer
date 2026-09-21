@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TFA Runner</title>
+<style>
+  :root {
+    --bg:#f6f7f9; --panel:#fff; --ink:#1c2024; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb;
+    --ok:#16a34a; --bad:#dc2626;
+    --trunc:#dc2626; --trunc-bg:#fef2f2; --div:#d97706; --div-bg:#fffbeb; --time:#2563eb; --time-bg:#eff6ff;
+    --code-bg:#0f172a; --code-ink:#e2e8f0; --code-hit:#fde68a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0b0e14; --panel:#151a22; --ink:#e6e9ef; --muted:#9aa4b2; --line:#232a35; --accent:#60a5fa;
+      --ok:#4ade80; --bad:#f87171;
+      --trunc:#f87171; --trunc-bg:#2a1414; --div:#fbbf24; --div-bg:#2a2110; --time:#60a5fa; --time-bg:#14202e;
+      --code-bg:#05070c; --code-ink:#cbd5e1; --code-hit:#fde68a;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:24px 18px 90px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 18px;font-size:13px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:14px 0 5px}
+  input[type=text],textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font-size:14px}
+  textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.45;resize:vertical}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .steps{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0}
+  .steps label{display:inline-flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink);margin:0}
+  .btn{background:var(--accent);color:#fff;border:0;padding:11px 20px;border-radius:8px;cursor:pointer;font-size:15px;margin-top:14px}
+  .btn:disabled{opacity:.5;cursor:default}
+  .stepcard{border:1px solid var(--line);border-left-width:4px;border-radius:9px;padding:10px 14px;margin:8px 0;background:var(--panel)}
+  .stepcard.ok{border-left-color:var(--ok)} .stepcard.bad{border-left-color:var(--bad)}
+  .stephead{display:flex;align-items:center;gap:10px}
+  .stephead b{font-size:15px}
+  .stat{font-size:12px;font-weight:700}
+  .stat.ok{color:var(--ok)} .stat.bad{color:var(--bad)}
+  .dl{margin-left:auto;font-size:13px;color:var(--accent);text-decoration:none}
+  .toggle{color:var(--accent);cursor:pointer;font-size:12px;user-select:none}
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:8px;padding:12px;overflow-x:auto;font-size:12px;line-height:1.45;margin:8px 0 2px}
+  pre .hit{background:rgba(253,230,138,.14);color:var(--code-hit);display:block}
+  .hide{display:none}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--muted);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  h2{font-size:16px;margin:26px 0 8px}
+  /* finding cards */
+  .card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:14px 16px;margin-bottom:12px}
+  .card.TRUNCATION{border-left-color:var(--trunc)} .card.DIVERGENCE{border-left-color:var(--div)} .card.TIMING{border-left-color:var(--time)}
+  .head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .rank{font-size:22px;font-weight:700}
+  .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px}
+  .badge.TRUNCATION{color:var(--trunc);background:var(--trunc-bg)} .badge.DIVERGENCE{color:var(--div);background:var(--div-bg)} .badge.TIMING{color:var(--time);background:var(--time-bg)}
+  .score{color:var(--muted);font-size:12px;margin-left:auto}
+  .plain{font-size:15px;margin:10px 0 6px} .kv{font-size:13px;color:var(--muted);margin:2px 0} .kv b{color:var(--ink)}
+  .err{color:var(--bad);font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TFA Runner</h1>
+  <p class="sub">Point at a folder of log files on this machine, run the pipeline, download each step's output, and read the ranked report below. Runs locally on <span class="mono">127.0.0.1</span>.</p>
+
+  <div class="panel">
+    <label for="dir">Log folder (absolute path on this machine)</label>
+    <input type="text" id="dir" class="mono" placeholder="/var/log/myapp  or  C:\logs\myapp">
+
+    <label for="config">Config (YAML)</label>
+    <textarea id="config" rows="16"></textarea>
+
+    <label>Steps to run</label>
+    <div class="steps" id="steps">
+      <label><input type="checkbox" value="parse" checked> parse</label>
+      <label><input type="checkbox" value="segment" checked> segment</label>
+      <label><input type="checkbox" value="cluster" checked> cluster</label>
+      <label><input type="checkbox" value="baseline" checked> baseline</label>
+      <label><input type="checkbox" value="detect" checked> detect</label>
+      <label><input type="checkbox" value="analyze" checked> analyze (report)</label>
+    </div>
+
+    <button class="btn" id="run">Run pipeline</button>
+  </div>
+
+  <div id="results"></div>
+  <div id="report"></div>
+</div>
+
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pct=x=>(x==null?0:Math.round(x*100))+"%";
+
+const DEFAULT_CONFIG = `profile: default
+
+segmentation:
+  strategy: ENTRY_MARKER
+  entryCallSites:
+    - com.bank.order.OrderController:45
+    - com.bank.payment.PaymentController:30
+    - com.bank.auth.LoginController:22
+  terminalCallSites:
+    - com.bank.order.OrderController:99
+    - com.bank.payment.PaymentController:80
+    - com.bank.auth.LoginController:60
+
+clustering:
+  signatureK: 3
+  minClusterSize: 10
+
+baseline:
+  alternatives: 3
+
+detection:
+  timingFactor: 3.0
+
+ranking:
+  topN: 20
+`;
+$("#config").value = DEFAULT_CONFIG;
+
+$("#run").onclick = async () => {
+  const dir = $("#dir").value.trim();
+  if (!dir) { alert("Enter the log folder path."); return; }
+  const steps = [...document.querySelectorAll("#steps input:checked")].map(c=>c.value);
+  if (!steps.length) { alert("Pick at least one step."); return; }
+
+  const btn = $("#run"); btn.disabled = true; btn.textContent = "Running…";
+  $("#results").innerHTML = "<h2>Steps</h2>";
+  $("#report").innerHTML = "";
+
+  try {
+    // create the run (writes config), then step through one at a time
+    const startBody = new URLSearchParams({ dir, config: $("#config").value });
+    const start = await fetch("/api/start", { method:"POST", body:startBody }).then(r=>r.json());
+    if (start.error) { $("#results").innerHTML = `<div class="panel err">Error: ${esc(start.error)}</div>`; return; }
+    const runId = start.runId;
+
+    let reportReady = false;
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const card = pendingCard(step, i, steps.length);
+      $("#results").appendChild(card);
+      try {
+        const s = await fetch(`/api/step?run=${runId}&name=${encodeURIComponent(step)}`, { method:"POST" }).then(r=>r.json());
+        fillCard(card, runId, s);
+        if (s.reportReady) reportReady = true;
+      } catch (e) {
+        card.className = "stepcard bad";
+        card.querySelector(".stephead").innerHTML = `<b class="mono">tfa ${esc(step)}</b> <span class="stat bad">request failed: ${esc(e.message)}</span>`;
+        break;
+      }
+    }
+    if (reportReady) await renderReport(runId);
+  } catch (e) {
+    $("#results").innerHTML += `<div class="panel err">Request failed: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Run pipeline";
+  }
+};
+
+function pendingCard(step, i, total) {
+  const card = document.createElement("div");
+  card.className = "stepcard";
+  card.innerHTML = `<div class="stephead">
+      <b class="mono">tfa ${esc(step)}</b>
+      <span class="stat"><span class="spin"></span> running… (${i+1}/${total})</span>
+    </div>`;
+  return card;
+}
+
+function fillCard(card, runId, s) {
+  const cls = s.ok ? "ok" : "bad";
+  const kb = (s.bytes/1024).toFixed(1);
+  card.className = "stepcard " + cls;
+  card.innerHTML = `
+    <div class="stephead">
+      <b class="mono">tfa ${esc(s.name)}</b>
+      <span class="stat ${cls}">${s.ok ? "exit 0" : "exit "+s.exitCode}</span>
+      <a class="dl" href="/api/artifact?run=${runId}&name=${encodeURIComponent(s.file)}">download ${esc(s.file)} (${kb} KB)</a>
+    </div>
+    <span class="toggle">▸ output</span>
+    <div class="out hide"><pre>${logHtml(s.tail)}</pre></div>`;
+  card.querySelector(".toggle").onclick = e => {
+    const box = card.querySelector(".out");
+    const open = box.classList.toggle("hide");
+    e.target.textContent = e.target.textContent.replace(/^[▸▾]/, open ? "▸" : "▾");
+  };
+}
+
+function logHtml(text){
+  return String(text||"").split("\n").map(l =>
+    l.includes(">>") ? `<span class="hit">${esc(l)}</span>` : esc(l)).join("\n");
+}
+
+async function renderReport(runId) {
+  const res = await fetch("/api/report?run=" + runId);
+  if (!res.ok) return;
+  const d = await res.json();
+  const findings = d.findings || [];
+  const s = d.summary || {}, m = d.meta || {};
+  let html = `<h2>Report — top findings</h2>`;
+  html += `<div class="kv">${m.profile||"?"} / ${m.strategy||"?"} · ${s.episodesEvaluated??"?"} episodes evaluated, ${s.episodesCensored??0} censored · ${s.totalFindings??0} findings`
+        + ` · <a class="dl mono" href="/api/artifact?run=${runId}&name=report.json">download report.json</a></div>`;
+  if (!findings.length) html += `<div class="panel">Clean run — nothing flagged in the top ${ (m && s.suppressedCount) || ""} .</div>`;
+  findings.forEach(f => html += cardHtml(f));
+  $("#report").innerHTML = html;
+}
+
+function plain(f){
+  const w = `<span class="mono">${esc(f.divergenceCallSite)}</span>`;
+  if (f.type==="TRUNCATION") return `The flow broke at ${w}. ${pct(f.expectedShare)} of runs reach <span class="mono">${esc(f.expectedCallSite)}</span> and finish — these <b>${f.occurrences}</b> stopped early (<span class="mono">${esc(f.observed)}</span>).`;
+  if (f.type==="DIVERGENCE") return `Wrong turn at ${w}. ${pct(f.expectedShare)} went to <span class="mono">${esc(f.expectedCallSite)}</span> here; these <b>${f.occurrences}</b> went to <span class="mono">${esc(f.observed)}</span> instead.`;
+  return `Too slow into ${w}. The step <span class="mono">${esc(f.expectedCallSite)}</span> → <span class="mono">${esc(f.divergenceCallSite)}</span> ran far over its p95 (${esc(f.observed)}) in <b>${f.occurrences}</b> run(s).`;
+}
+function cardHtml(f){
+  return `<div class="card ${esc(f.type)}">
+    <div class="head"><span class="rank">#${f.rank}</span><span class="badge ${esc(f.type)}">${esc(f.type)}</span>
+      <span class="kv">×${f.occurrences}</span><span class="score">score ${(f.score||0).toFixed(2)}</span></div>
+    <p class="plain">${plain(f)}</p>
+    <div class="kv">Flow: <b class="mono">${esc(f.clusterSignature)}</b> · size ${f.clusterSize}</div>
+    <div class="kv">Go look at: <b class="mono">${esc(f.exampleThread)}</b> @ <b class="mono">${esc(f.exampleTimestamp)}</b></div>
+    <pre>${logHtml((f.logContext||[]).join("\n"))}</pre>
+  </div>`;
+}
+</script>
+</body>
+</html>

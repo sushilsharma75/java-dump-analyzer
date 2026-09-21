@@ -1,3 +1,4 @@
+import Investigation from './Investigation'
 import { useState, useMemo } from 'react'
 import Findings from './Findings'
 import LLMPanel from './LLMPanel'
@@ -15,13 +16,14 @@ const STATE_COLORS = {
   UNKNOWN: 'bg-ink-500',
 }
 
-export default function ThreadAnalysis({ analysis, filename, sourceSession }) {
+export default function ThreadAnalysis({ analysis, filename, sourceSession, onUpdate }) {
   return (
     <div className="max-w-7xl mx-auto pt-8 space-y-8">
       <VerdictBanner verdict={analysis.verdict} summary={analysis.summary} />
+      <Investigation analysis={analysis} sourceSession={sourceSession} onUpdate={onUpdate} />
       <CaseFile analysis={analysis} filename={filename} />
       <StateBreakdown analysis={analysis} />
-      <ExportReport analysis={analysis} filename={filename} kind="thread" />
+      <ExportReport analysis={analysis} filename={filename} kind="thread" sourceSession={sourceSession} />
 
       <Section label="// diagnostic findings" count={analysis.findings.length}>
         <Findings findings={analysis.findings} />
@@ -39,7 +41,7 @@ export default function ThreadAnalysis({ analysis, filename, sourceSession }) {
         </Section>
       )}
 
-      <LLMPanel analysis={analysis} kind="thread" />
+      <LLMPanel analysis={analysis} kind="thread" sourceSession={sourceSession} />
 
       {analysis.deadlocks?.length > 0 && (
         <Section label="// deadlocks" count={analysis.deadlocks.length}>

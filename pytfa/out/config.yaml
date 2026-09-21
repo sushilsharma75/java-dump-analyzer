@@ -1,0 +1,12 @@
+profile: default
+segmentation:
+  strategy: CORRELATION_ID
+  correlationIdPattern: 'trace_id=([0-9a-f]+)'
+  terminalCallSites: [OrderController:38]
+clustering:
+  signatureK: 3
+  minClusterSize: 10
+detection:
+  timingFactor: 3.0
+ranking:
+  topN: 20

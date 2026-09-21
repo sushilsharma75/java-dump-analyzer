@@ -23,9 +23,11 @@ import tempfile
 import zipfile
 import asyncio
 import logging
+import uuid
+import json
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -45,14 +47,17 @@ from .analyzers.compare import compare_heaps, compare_threads
 from .analyzers.llm import generate_llm_summary, LLMRequestError
 from .analyzers.source import SourceIndex
 from .sessions import SOURCES, JOBS
+from . import artifacts
+from .analyzers import heap_index
+from .schemas import CaptureMetadata
 
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("java-dump-analyzer")
 
 app = FastAPI(
-    title="Java Dump Analyzer",
-    description="Analyze JVM thread dumps and heap dumps with actionable diagnostics.",
+    title="Stack Analyser",
+    description="Investigate JVM dumps, GC logs and DBDoctor database snapshots.",
     version="0.2.0",
 )
 
@@ -113,10 +118,11 @@ async def analyze_thread_endpoint(
     log.info("Analyzing thread dump: %s (%d bytes, source=%s)",
              file.filename, len(raw), bool(source_index))
     try:
-        result = analyze_thread_dump(text, source=source_index)
+        result = await asyncio.to_thread(analyze_thread_dump, text, source=source_index)
     except Exception as e:
         log.exception("Thread analysis failed")
         raise HTTPException(500, f"Analysis failed: {e}")
+    artifacts.save(result, "thread")
     return result
 
 
@@ -143,6 +149,9 @@ async def analyze_gc_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         log.exception("GC log analysis failed")
         raise HTTPException(500, f"Analysis failed: {e}")
+    from .analyzers.evidence import stamp
+    stamp(result.findings)
+    artifacts.save(result, "gc")
     return result
 
 
@@ -154,7 +163,9 @@ def _resolve_source(source_session):
     if not source_session:
         return None
     sess = SOURCES.get(source_session)
-    return sess["index"] if sess else None
+    if not sess:
+        raise HTTPException(404, "Source session not found")
+    return sess["index"]
 
 
 @app.post("/api/analyze/heap", response_model=HeapDumpAnalysis)
@@ -187,9 +198,17 @@ async def analyze_heap_sync(
         tmp.close()
 
         log.info("Analyzing heap dump (sync): %s (%d bytes)", file.filename, total)
-        with open(tmp.name, "rb") as fp:
-            max_bytes = 256 * 1024 * 1024 if quick else None
-            result = parse_heap_dump(fp, max_bytes=max_bytes, source=_resolve_source(source_session))
+        identifier = uuid.uuid4().hex
+        source = _resolve_source(source_session)
+        def run():
+            with open(tmp.name, "rb") as fp:
+                return parse_heap_dump(fp, max_bytes=256*1024*1024 if quick else None,
+                                       source=source, index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
+        result = await asyncio.to_thread(run)
+        result.analysis_id = identifier
+        if any(x.stage == "object index" and x.status == "completed" for x in result.stages):
+            result.object_index_id = identifier
+        artifacts.save(result, "heap")
         return result
     except HTTPException:
         raise
@@ -284,13 +303,19 @@ async def _run_heap_parse(
 ) -> None:
     """Background task: parse the file, report progress, store result."""
     try:
+        identifier = uuid.uuid4().hex
         cb = JOBS.progress_callback(job_id)
         src_index = _resolve_source(source_session)
         def _do_parse():
             with open(path, "rb") as fp:
                 max_bytes = 256 * 1024 * 1024 if quick else None
-                return parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index)
+                return parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index,
+                                       index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
         result = await asyncio.to_thread(_do_parse)
+        result.analysis_id = identifier
+        if any(x.stage == "object index" and x.status == "completed" for x in result.stages):
+            result.object_index_id = identifier
+        artifacts.save(result, "heap")
         JOBS.mark_done(job_id, result.model_dump())
         log.info("Heap parse complete: job=%s", job_id)
     except Exception as e:
@@ -535,7 +560,7 @@ async def llm_summarize(req: LLMSummaryRequest):
         )
     try:
         summary = await generate_llm_summary(
-            req.analysis, req.kind, req.api_key, model=req.model
+            req.analysis, req.kind, req.api_key, model=req.model, detail=req.detail, source=_resolve_source(req.source_session)
         )
         return LLMSummaryResponse(summary=summary, enabled=True)
     except LLMRequestError as e:
@@ -583,3 +608,136 @@ async def _start_gc():
             except Exception as e:
                 log.warning("GC loop error: %s", e)
     asyncio.create_task(_gc_loop())
+
+
+# Persisted investigation endpoints. IDs are server generated, never file paths.
+def _artifact(identifier):
+    try:
+        return artifacts.read(identifier)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(404, "Analysis not found")
+
+
+def _index(identifier):
+    data = _artifact(identifier)["analysis"]
+    if data.get("object_index_id") != identifier:
+        raise HTTPException(409, "Object index unavailable; inspect analysis stage coverage")
+    return artifacts.path_for(identifier, ".sqlite")
+
+
+@app.get("/api/analyses")
+def list_analyses():
+    out = []
+    for path in sorted(artifacts.ROOT.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:100]:
+        item = artifacts.read(path.stem)
+        out.append({"analysis_id": path.stem, "kind": item["kind"], "summary": item["analysis"].get("summary", "")})
+    return out
+
+
+@app.get("/api/analyses/{identifier}")
+def get_analysis(identifier: str):
+    return _artifact(identifier)
+
+
+@app.delete("/api/analyses/{identifier}")
+def delete_analysis(identifier: str):
+    _artifact(identifier)
+    return {"deleted": artifacts.remove(identifier)}
+
+
+@app.post("/api/analyses/{identifier}/capture")
+def set_capture(identifier: str, metadata: CaptureMetadata):
+    item = _artifact(identifier)
+    from datetime import datetime
+    for value in (metadata.captured_at, metadata.process_start):
+        if value:
+            try: datetime.fromisoformat(value)
+            except ValueError: raise HTTPException(422, "Capture/start times must be ISO timestamps")
+    item["analysis"]["capture"] = metadata.model_dump()
+    provenance = item["analysis"].get("source_provenance") or {}
+    matched = bool(provenance.get("manifest_valid") and metadata.build_id and metadata.build_id == provenance.get("build_id"))
+    provenance["build_verified"] = matched
+    for finding in item["analysis"].get("findings", []):
+        for loc in finding.get("source_locations", []): loc["build_verified"] = matched
+    return artifacts.save(item["analysis"], item["kind"])
+
+
+@app.post("/api/analyses/{identifier}/source/{session}")
+def attach_source(identifier: str, session: str):
+    item = _artifact(identifier)
+    source = _resolve_source(session)
+    data = item["analysis"]
+    from .analyzers.diagnostics import _build_source_locations_for_finding
+    from .schemas import Finding, ThreadInfo
+    threads = {str(i): ThreadInfo(**t) for i, t in enumerate(data.get("threads", []))}
+    for f in data.get("findings", []):
+        if threads:
+            f["source_locations"] = [x.model_dump() for x in _build_source_locations_for_finding(Finding(**f), threads, source)]
+        for loc in f.get("source_locations", []):
+            found = source.lookup(loc["class_name"], loc.get("line"))
+            loc.update(repo_path=source.relative_path(found[0]) if found else None,
+                       snippet=found[1].model_dump() if found and found[1] else None,
+                       resolution="lexical_symbol" if found else "unresolved", build_verified=False)
+    data["source_provenance"] = dict(source.provenance)
+    build = (data.get("capture") or {}).get("build_id")
+    matched = bool(source.provenance.get("manifest_valid") and build and build == source.provenance.get("build_id"))
+    data["source_provenance"]["build_verified"] = matched
+    for f in data.get("findings", []):
+        for loc in f.get("source_locations", []): loc["build_verified"] = matched
+    if item["kind"] == "heap":
+        for key in ("histogram", "top_classes_by_size", "top_classes_by_count"):
+            for entry in data.get(key, [])[:30]:
+                entry["references"] = source.find_references(entry["class_name"], max_results=8)
+                for ref in entry["references"]:
+                    if ref.get("snippet"): ref["snippet"] = ref["snippet"].model_dump()
+    return artifacts.save(data, item["kind"])
+
+
+@app.get("/api/source/{session}/context")
+def source_context(session: str, class_name: str, method: Optional[str] = None, line: Optional[int] = None):
+    return _resolve_source(session).context(class_name, method, line)
+
+
+@app.get("/api/heap/{identifier}/objects")
+def heap_objects(identifier: str, class_name: str = "", offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)):
+    return heap_index.search_objects(_index(identifier), class_name, offset, limit)
+
+
+@app.get("/api/heap/{identifier}/objects/{oid}")
+def heap_object(identifier: str, oid: str, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200)):
+    data = heap_index.object_detail(_index(identifier), oid, offset, limit)
+    if data is None: raise HTTPException(404, "Object not found")
+    return data
+
+
+@app.get("/api/heap/{identifier}/objects/{oid}/roots")
+def heap_roots(identifier: str, oid: str, include_weak: bool = False,
+               max_nodes: int = Query(10000, ge=1, le=100000), max_depth: int = Query(40, ge=1, le=100),
+               source_session: Optional[str] = None):
+    data = heap_index.root_paths(_index(identifier), oid, max_nodes, max_depth, include_weak)
+    source = _resolve_source(source_session)
+    if source:
+        for path in data["paths"]:
+            for edge in path["edges"]:
+                field = edge["field"]
+                owner = heap_index.object_detail(_index(identifier), edge["src"], limit=1)
+                if field.startswith("static:") and owner and owner.get("name"):
+                    loc = source.find_static_field(owner["name"], field[7:])
+                elif "." in field:
+                    cls, name = field.rsplit(".", 1)
+                    loc = source.find_field(cls, name)
+                else: loc = None
+                if loc:
+                    build = (_artifact(identifier)["analysis"].get("capture") or {}).get("build_id")
+                    matched = bool(source.provenance.get("manifest_valid") and build and build == source.provenance.get("build_id"))
+                    edge["source"] = {**loc, "role": "retaining_field", "build_verified": matched}
+    return data
+
+
+@app.get("/api/heap/{identifier}/threads")
+def heap_stack_threads(identifier: str):
+    return heap_index.heap_threads(_index(identifier))
+
+
+from .database import router as database_router
+app.include_router(database_router)

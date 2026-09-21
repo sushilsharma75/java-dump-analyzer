@@ -42,3 +42,6 @@ heap-*.bin
 
 # WSL/Windows alternate-data-stream artifacts
 *:Zone.Identifier
+
+# Original DBDoctor checkout; runtime is vendored under backend/app/vendor
+/integrations/dbdoctor/

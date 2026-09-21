@@ -41,7 +41,7 @@ def test_allocating_match_bridges_via_source(source_index):
     r = correlate(heap, thread, source=source_index)
     assert r["matched_classes"] >= 1
     f = next(f for f in r["findings"] if "Order" in f["title"])
-    assert f["severity"] == "critical"
+    assert f["severity"] == "warning"
     loc = f["source_locations"][0]
     assert loc["repo_path"].endswith("OrderService.java")
     assert loc["line"] == 21

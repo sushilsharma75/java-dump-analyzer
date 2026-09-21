@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tfa"
+version = "0.1.0"
+description = "Thread Flow Analyzer — reconstructs per-thread execution flows from a log dump and ranks deviations from the population baseline."
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+tfa = "tfa.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tfa*"]
+
+[tool.setuptools.package-data]
+tfa = ["webui/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

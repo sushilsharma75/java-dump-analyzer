@@ -31,10 +31,6 @@ export default function ComparisonPanel({ kind, before, after, beforeName, after
 
   // Stable discriminator so the effect only re-runs on a real change (and re-fires
   // on a StrictMode remount instead of orphaning the request).
-  const disc = kind === 'heap'
-    ? `${before?.file_size_bytes}|${before?.total_instances}|${after?.file_size_bytes}|${after?.total_instances}`
-    : `${before?.total_threads}|${after?.total_threads}`
-  const key = before && after ? `${kind}|${disc}|${sourceSession?.session_id || ''}` : null
 
   useEffect(() => {
     if (!before || !after) return
@@ -46,10 +42,10 @@ export default function ComparisonPanel({ kind, before, after, beforeName, after
     p.then((r) => { if (!cancelled) { setResult(r); setState('done') } })
      .catch((e) => { if (!cancelled) { setError(e.message); setState('error') } })
     return () => { cancelled = true }
-  }, [key])
+  }, [kind, before, after, sourceSession?.session_id])
 
   if (!before || !after) return null
-  const tone = TONE[result?.verdict] || TONE.healthy
+  const tone = TONE[result?.verdict] || TONE.degraded
 
   return (
     <section className={`panel ${tone.border} ${tone.bg} overflow-hidden animate-slide-up`}>
@@ -59,12 +55,12 @@ export default function ComparisonPanel({ kind, before, after, beforeName, after
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="badge-neutral">delta</span>
             <span className="label text-bone-500">
-              // {kind === 'heap' ? 'heap growth' : 'stuck threads'} · baseline → current
+              // {kind === 'heap' ? 'heap growth' : 'persistent stacks'} · baseline → current
             </span>
             {state === 'done' && <span className={tone.badge}>{result.verdict}</span>}
           </div>
           <h3 className="font-display text-lg text-bone-100 leading-snug">
-            {kind === 'heap' ? 'What grew between the two heaps' : 'What stayed stuck between the two dumps'}
+            {kind === 'heap' ? 'What grew between the two heaps' : 'What persisted between the two dumps'}
           </h3>
           <p className="font-mono text-[11px] text-bone-500 mt-1 truncate">
             {beforeName || 'baseline'} <span className="text-bone-400">→</span> {afterName || 'current'}
@@ -81,7 +77,7 @@ export default function ComparisonPanel({ kind, before, after, beforeName, after
       {open && state === 'done' && (
         <div className="px-5 md:px-6 pb-6 space-y-6 animate-fade-in">
           {kind === 'heap' ? <Growers result={result} /> : <Stuck result={result} />}
-          {result?.findings?.length > 0 && <Findings findings={result.findings} />}
+          {result?.findings?.length > 0 && <div>{result.limitations?.map((s, i) => <p key={i} className="text-sm text-flag-warning">{s}</p>)}<Findings findings={result.findings} /></div>}
         </div>
       )}
     </section>
@@ -130,11 +126,11 @@ function Growers({ result }) {
 function Stuck({ result }) {
   const rows = result.stuck_threads || []
   if (!rows.length) {
-    return <div className="panel-inset p-4 text-bone-500 font-mono text-sm">no threads stuck at the same frame in both dumps</div>
+    return <div className="panel-inset p-4 text-bone-500 font-mono text-sm">no non-idle persistent full stacks identified</div>
   }
   return (
     <div className="panel overflow-hidden">
-      <div className="px-5 py-3 border-b border-ink-600/60 label">threads stuck in both captures</div>
+      <div className="px-5 py-3 border-b border-ink-600/60 label">threads with persistent stacks in both captures</div>
       <div>
         {rows.map((t, i) => (
           <div key={i} className="border-b border-ink-700/30 last:border-0 px-5 py-2.5 flex items-center gap-3 text-sm">

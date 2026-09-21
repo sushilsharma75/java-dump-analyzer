@@ -118,9 +118,7 @@ def test_correlation_marries_gc_trend_with_heap_and_thread(source_index):
              "file": "OrderService.java", "line": 21}]}],
     }
     r = correlate(heap, thread, source=source_index, gc=gc)
-    leak = [f for f in r["findings"] if "Confirmed memory leak" in f["title"]]
-    assert leak, "expected a three-pillar confirmed-leak finding"
-    f = leak[0]
-    assert f["severity"] == "critical"
-    ev = " ".join(f["evidence"])
-    assert "MB/min" in ev and "Order" in ev
+    assert not any("Confirmed memory leak" in f["title"] for f in r["findings"])
+    trend = next(f for f in r["findings"] if "GC occupancy trend" in f["title"])
+    assert trend["severity"] == "warning"
+    assert "does not prove" in trend["description"]

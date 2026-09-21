@@ -1,0 +1,4 @@
+clustering:
+  signatureK: 3
+  minClusterSize: 10
+  clusterCeiling: 200

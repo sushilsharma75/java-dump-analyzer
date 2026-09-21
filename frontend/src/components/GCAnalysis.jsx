@@ -1,3 +1,4 @@
+import Investigation from './Investigation'
 import Findings from './Findings'
 import LLMPanel from './LLMPanel'
 import VerdictBanner from './VerdictBanner'
@@ -13,11 +14,12 @@ function fmtMs(ms) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(0)} ms`
 }
 
-export default function GCAnalysis({ analysis, filename }) {
+export default function GCAnalysis({ analysis, filename, onUpdate }) {
   const a = analysis
   return (
     <div className="max-w-7xl mx-auto pt-8 space-y-8">
       <VerdictBanner verdict={a.verdict} summary={a.summary} />
+      <Investigation analysis={a} onUpdate={onUpdate} />
       <CaseFile analysis={a} filename={filename} />
       <Stats analysis={a} />
       <ExportReport analysis={a} filename={filename} kind="gc" />

@@ -15,6 +15,10 @@ import os
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 from ..schemas import SourceSnippet
+from .source_symbols import scopes, java_ast
+import hashlib
+import subprocess
+import json
 
 
 # Per-language settings: extensions, package regex, max scan lines for the package decl
@@ -68,11 +72,16 @@ class SourceIndex:
         self._all_files: List[Path] = []
         self.files_indexed = 0
         self.languages: Dict[str, int] = {}
+        self._symbols = {}
+        self._file_hashes = {}
+        self._candidates = {}
+        self.provenance = {"build_verified": False, "resolution": "lexical", "limitations": ["Java declarations use javac AST when available; imports are conservatively bound without a project classpath. Other languages use lexical scopes. Runtime build identity must be supplied."]}
 
     def build(self) -> None:
         """Walk the repo and populate the indexes."""
         count = 0
         for dirpath, dirnames, filenames in os.walk(self.root):
+            if count >= MAX_FILES: break
             # In-place prune: skip uninteresting directories
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
 
@@ -87,22 +96,77 @@ class SourceIndex:
                 except OSError:
                     continue
 
-                fqcn = self._infer_fqcn(path, ext)
-                simple = path.stem  # filename without extension
-
-                if fqcn:
-                    self._fqcn_to_path[fqcn] = path
-                # Always register simple-name fallback
-                self._simple_to_paths.setdefault(simple, []).append(path)
+                try:
+                    content = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                if not path.resolve().is_relative_to(self.root):
+                    continue
+                self._file_hashes[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+                symbols = scopes(content)
+                self._symbols[path] = symbols
+                names = [t["fqcn"] for t in symbols["types"]]
+                if ext == ".kt":
+                    names.append(".".join(filter(None, (symbols["package"], path.stem + "Kt"))))
+                for fqcn in names:
+                    self._candidates.setdefault(fqcn, []).append(path)
+                    if len(self._candidates[fqcn]) == 1:
+                        self._fqcn_to_path[fqcn] = path
+                    else:
+                        self._fqcn_to_path.pop(fqcn, None)
+                    simple = fqcn.rsplit(".", 1)[-1]
+                    self._simple_to_paths.setdefault(simple, []).append(path)
                 self._all_files.append(path)
 
                 self.languages[ext] = self.languages.get(ext, 0) + 1
                 count += 1
                 if count >= MAX_FILES:
                     self.files_indexed = count
-                    return
+                    self.provenance["truncated"] = True
+                    break
 
         self.files_indexed = count
+        try:
+            parsed = java_ast([p for p in self._all_files if p.suffix == ".java"])
+        except (OSError, subprocess.SubprocessError):
+            parsed = {}
+        for path, ast in parsed.items():
+            if ast.get("valid"):
+                self._symbols[path].update(ast, parser="javac")
+            else:
+                self._symbols[path].update(types=[], methods=[], parser="invalid_java")
+        # Rebuild type maps from the compiler syntax tree where available.
+        self._candidates.clear(); self._fqcn_to_path.clear(); self._simple_to_paths.clear()
+        for path, symbols in self._symbols.items():
+            names = [t["fqcn"] for t in symbols["types"]]
+            if path.suffix == ".kt": names.append(".".join(filter(None, (symbols["package"], path.stem + "Kt"))))
+            for name in names:
+                self._candidates.setdefault(name, []).append(path)
+                self._simple_to_paths.setdefault(name.rsplit(".", 1)[-1], []).append(path)
+        self._fqcn_to_path.update({n: paths[0] for n, paths in self._candidates.items() if len(paths) == 1})
+        self.provenance["java_ast_files"] = sum(s.get("parser") == "javac" for s in self._symbols.values())
+        self.provenance["resolution"] = "javac AST with conservative import binding; lexical fallback for other languages"
+        digest = hashlib.sha256()
+        for path in sorted(self._all_files):
+            digest.update(self.relative_path(path).encode())
+            digest.update(path.read_bytes())
+        self.provenance["content_sha256"] = digest.hexdigest()
+        manifest = self.root / "postmortem-source.json"
+        if manifest.is_file():
+            try:
+                declared = json.loads(manifest.read_text())
+                valid = declared.get("source_sha256") == digest.hexdigest() and not self.provenance.get("truncated")
+                self.provenance.update(manifest_valid=bool(valid), build_id=declared.get("build_id"))
+            except (ValueError, OSError):
+                self.provenance["manifest_valid"] = False
+        try:
+            proc = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=3)
+            if proc.returncode == 0:
+                self.provenance["commit"] = proc.stdout.strip()
+                status = subprocess.run(["git", "-C", str(self.root), "status", "--porcelain"], capture_output=True, text=True, timeout=3)
+                self.provenance["working_tree_dirty"] = bool(status.stdout.strip())
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     @property
     def classes_indexed(self) -> int:
@@ -128,181 +192,109 @@ class SourceIndex:
         if not simple or len(simple) < 3:
             return []
 
-        # Whole-word match on the simple class name
-        word_re = re.compile(rf"\b{re.escape(simple)}\b")
-        # Classify the kind of reference for ranking/labelling
-        new_re = re.compile(rf"\bnew\s+{re.escape(simple)}\b")
-        import_re = re.compile(rf"\bimport\s+.*\b{re.escape(simple)}\b")
-        # A method/ctor signature line (very rough): visibility/return ... name( ... )
-        method_sig_re = re.compile(
-            r"^\s*(?:public|private|protected|static|final|synchronized|abstract|\s)*"
-            r"[\w<>\[\],.\s?&]+\s+(\w+)\s*\([^;]*\)\s*(?:throws[\w,\s.]*)?\{?\s*$"
-        )
-
-        results: List[dict] = []
-        for path in self._all_files:
-            try:
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-            except OSError:
-                continue
-
-            for i, line in enumerate(lines):
-                if not word_re.search(line):
+        # A simple name is resolvable only when the index contains one declared type.
+        if "." not in class_name:
+            types = [n for n in self._candidates if n.rsplit(".", 1)[-1] == simple]
+            if len(types) != 1:
+                return []
+            class_name = types[0]
+        target_package = class_name.rsplit(".", 1)[0] if "." in class_name else ""
+        results = []
+        for path, symbols in self._symbols.items():
+            if not self._unchanged(path): continue
+            imports = symbols["imports"]
+            explicit = [i for i in imports if i.rsplit(".", 1)[-1] == simple]
+            unqualified_ok = (class_name in explicit or
+                              (not explicit and symbols["package"] == target_package))
+            # Wildcard imports cannot prove a unique binding; leave them unresolved.
+            clean = symbols["clean"]
+            pattern = rf"(?<![\w.]){re.escape(class_name)}\b"
+            if unqualified_ok:
+                pattern += rf"|(?<![\w.]){re.escape(simple)}\b"
+            for match in re.finditer(pattern, clean):
+                line = clean.count("\n", 0, match.start()) + 1
+                start = clean.rfind("\n", 0, match.start()) + 1
+                prefix = clean[start:match.start()]
+                if re.search(r"\b(package|import|class|interface|record|enum)\s+$", prefix):
                     continue
-                # Skip the class's own declaration file noise: a line that's just
-                # 'package' or the class definition itself is low-value.
-                stripped = line.strip()
-                if stripped.startswith("package "):
-                    continue
-
-                if import_re.search(line):
-                    kind = "import"
-                elif new_re.search(line):
-                    kind = "new"
-                elif re.search(rf"\b{re.escape(simple)}\s*<", line) or \
-                        re.search(rf"\b{re.escape(simple)}\s+\w+\s*[;=]", line):
-                    kind = "field"
-                else:
-                    kind = "type-use"
-
-                # Walk backward to find the enclosing method signature
-                method = None
-                for j in range(i, max(-1, i - 80), -1):
-                    m = method_sig_re.match(lines[j])
-                    if m and m.group(1) not in ("if", "for", "while", "switch", "catch", "return"):
-                        method = m.group(1)
-                        break
-
-                lineno = i + 1
-                start = max(1, lineno - context_lines)
-                end = min(len(lines), lineno + context_lines)
-                snippet = {
-                    "start_line": start,
-                    "highlight_line": lineno,
-                    "lines": [l.rstrip("\n").rstrip("\r") for l in lines[start - 1:end]],
-                }
-                results.append({
-                    "repo_path": self.relative_path(path),
-                    "line": lineno,
-                    "method": method,
-                    "kind": kind,
-                    "snippet": snippet,
-                })
-
-        # Rank: constructor calls first (most likely the allocator), then fields,
-        # then other type uses, then imports. Cap the result set.
-        kind_rank = {"new": 0, "field": 1, "type-use": 2, "import": 3}
-        results.sort(key=lambda r: kind_rank.get(r["kind"], 9))
+                method = next((m for m in symbols["methods"] if m["start"] <= match.start() <= m["end"]), None)
+                kind = "new" if re.search(r"\bnew\s*$", prefix) else ("type-use" if method else "field")
+                results.append({"repo_path": self.relative_path(path), "line": line,
+                                "method": method["name"] if method else None, "kind": kind,
+                                "snippet": self._read_snippet(path, line, context_lines)})
+        results.sort(key=lambda r: ({"new": 0, "field": 1, "type-use": 2}[r["kind"]], r["repo_path"], r["line"]))
         return results[:max_results]
 
-    def find_static_field(self, class_name: str, field_name: str,
-                          context_lines: int = 4) -> Optional[dict]:
-        """Resolve a class's static field to its declaration line in source.
+    def find_static_field(self, class_name, field_name, context_lines=4):
+        return self._field(class_name, field_name, context_lines, static=True)
 
-        Heap dumps tell us a static field holds a live object, but not *where*
-        it's declared. This opens the class's own file, finds the line that
-        declares `field_name`, and reports the file, line, a code snippet, and
-        whether the declared type looks like a collection/cache (the strong
-        leak signal). Returns None if the class or field can't be located.
+    def find_field(self, class_name, field_name, context_lines=4):
+        return self._field(class_name, field_name, context_lines)
 
-        Result dict: {repo_path, line, snippet, type_hint, is_collection}.
-        """
-        if not class_name or not field_name:
-            return None
-        resolved = self.lookup(class_name)  # (path, snippet) — snippet None w/o line
-        if not resolved:
-            return None
-        path = resolved[0]
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except OSError:
-            return None
-
-        field_re = re.compile(rf"\b{re.escape(field_name)}\b")
-        decl_line: Optional[int] = None    # a line that also declares the field
-        fallback_line: Optional[int] = None  # first mention, if no clear decl found
-        for i, line in enumerate(lines):
-            if not field_re.search(line):
-                continue
-            stripped = line.lstrip()
-            if stripped.startswith(("//", "*", "/*", "@")):
-                continue  # comment / annotation noise
-            if fallback_line is None:
-                fallback_line = i + 1
-            # A declaration line: Java `static`, or Kotlin/Scala `val`/`var`/`object`.
-            if re.search(r"\bstatic\b", line) or re.search(r"\b(?:val|var|object)\b", line):
-                decl_line = i + 1
-                break
-
-        lineno = decl_line or fallback_line
-        if lineno is None:
-            return None
-
-        type_hint = lines[lineno - 1].strip()
-        return {
-            "repo_path": self.relative_path(path),
-            "line": lineno,
-            "snippet": self._read_snippet(path, lineno, context_lines),
-            "type_hint": type_hint,
-            "is_collection": bool(_COLLECTION_TYPE_RE.search(type_hint)),
-        }
-
-    def find_field(self, class_name: str, field_name: str,
-                   context_lines: int = 4) -> Optional[dict]:
-        """Resolve any field (static OR instance) of a class to its declaration.
-
-        Like `find_static_field`, but recognizes plain instance-field declarations
-        (`private Map<...> sessions = ...`) as well as `static`/`val`/`var`. Used by
-        the retention tracer, which surfaces instance fields that hold a leak.
-
-        Result dict: {repo_path, line, snippet, type_hint, is_collection}.
-        """
-        if not class_name or not field_name:
-            return None
+    def _field(self, class_name, field_name, context_lines, static=False):
         resolved = self.lookup(class_name)
         if not resolved:
             return None
         path = resolved[0]
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except OSError:
-            return None
-
-        field_re = re.compile(rf"\b{re.escape(field_name)}\b")
-        # A field declaration: ... <field> <;|=>  — a type precedes the name and a
-        # terminator/initializer follows. Excludes method calls and parameters.
-        decl_re = re.compile(
-            rf"^\s*(?:@\w+[^\n]*\s+)?(?:public|private|protected|static|final|"
-            rf"volatile|transient|val|var|\s)*[\w.$<>,\[\]\s?]+\b{re.escape(field_name)}\b\s*[;=]"
-        )
-        decl_line: Optional[int] = None
-        fallback_line: Optional[int] = None
-        for i, line in enumerate(lines):
-            if not field_re.search(line):
+        symbols = self._symbols[path]
+        if symbols.get("parser") == "javac":
+            fields = [f for f in symbols["fields"] if f["owner"] == class_name and f["name"] == field_name and (not static or f["static"])]
+            if len(fields) != 1: return None
+            f = fields[0]
+            return {"repo_path": self.relative_path(path), "line": f["line"], "snippet": self._read_snippet(path, f["line"], context_lines),
+                    "type_hint": f["type"], "is_collection": bool(_COLLECTION_TYPE_RE.search(f["type"]))}
+        clean = symbols["clean"]
+        for m in re.finditer(rf"\b{re.escape(field_name)}\b\s*(?:[;=:])", clean):
+            if any(x["start"] <= m.start() <= x["end"] for x in symbols["methods"]):
                 continue
-            stripped = line.lstrip()
-            if stripped.startswith(("//", "*", "/*")):
+            owner = next((t for t in reversed(symbols["types"]) if t["start"] < m.start() < t["end"]), None)
+            if not owner or owner["fqcn"] != class_name:
                 continue
-            if fallback_line is None:
-                fallback_line = i + 1
-            if decl_re.match(line):
-                decl_line = i + 1
-                break
+            start = max(clean.rfind(";", 0, m.start()), clean.rfind("{", 0, m.start()), clean.rfind("}", 0, m.start())) + 1
+            declaration = clean[start:m.end()]
+            if static and not re.search(r"\bstatic\b", declaration):
+                continue
+            if not re.search(r"[\w<>\[\]]+\s+" + re.escape(field_name), declaration):
+                continue
+            line = clean.count("\n", 0, m.start()) + 1
+            return {"repo_path": self.relative_path(path), "line": line,
+                    "snippet": self._read_snippet(path, line, context_lines),
+                    "type_hint": declaration.strip(), "is_collection": bool(_COLLECTION_TYPE_RE.search(declaration))}
+        return None
 
-        lineno = decl_line or fallback_line
-        if lineno is None:
-            return None
-        type_hint = lines[lineno - 1].strip()
-        return {
-            "repo_path": self.relative_path(path),
-            "line": lineno,
-            "snippet": self._read_snippet(path, lineno, context_lines),
-            "type_hint": type_hint,
-            "is_collection": bool(_COLLECTION_TYPE_RE.search(type_hint)),
-        }
+    def context(self, class_name, method=None, line=None):
+        resolved = self.lookup(class_name, line)
+        if not resolved:
+            return {"resolution": "ambiguous_or_unresolved", "class_name": class_name}
+        path, snippet = resolved
+        methods = [m for m in self._symbols[path]["methods"] if m["name"] == method]
+        if line:
+            methods = [m for m in methods if m["line"] <= line <= m["end_line"]]
+        result = {"resolution": self._symbols[path].get("parser", "lexical"), "repo_path": self.relative_path(path),
+                  "build_verified": False, "source_provenance": self.provenance}
+        if len(methods) == 1:
+            m = methods[0]
+            lines = path.read_text(errors="replace").splitlines()
+            result["method"] = {"start_line": m["line"], "end_line": m["end_line"],
+                                "lines": lines[m["line"] - 1:min(m["end_line"], m["line"] + 199)],
+                                "truncated": m["end_line"] - m["line"] >= 200}
+        elif snippet:
+            result["snippet"] = snippet.model_dump()
+        fields = self._symbols[path].get("fields", [])
+        selected_fields = [f for f in fields if f["line"] == line] if line else []
+        if selected_fields:
+            clean = self._symbols[path]["clean"]
+            lines = path.read_text(errors="replace").splitlines()
+            related = []
+            for m in self._symbols[path]["methods"]:
+                body = clean[m["start"]:m["end"]]
+                if any(re.search(r"\b" + re.escape(f["name"]) + r"\b", body) for f in selected_fields):
+                    related.append({"method": m["name"], "start_line": m["line"],
+                                    "lines": lines[m["line"]-1:min(m["end_line"],m["line"]+99)],
+                                    "role": "candidate field usage; check shadowing and call paths"})
+            result["related_field_methods"] = related[:8]
+            result["related_methods_omitted"] = max(0, len(related)-8)
+        return result
 
     def _infer_fqcn(self, path: Path, ext: str) -> Optional[str]:
         """Read the file's package declaration and combine with its filename to form an FQCN."""
@@ -334,25 +326,15 @@ class SourceIndex:
         if not class_name:
             return None
 
-        # Strip inner class suffix: com.example.Foo$Bar -> com.example.Foo, Foo$$Lambda$1 -> Foo
-        outer = re.split(r"[$]", class_name, maxsplit=1)[0]
-        path = self._fqcn_to_path.get(outer)
-
-        if not path:
-            # Fallback to simple name (just the last segment)
-            simple = outer.rsplit(".", 1)[-1]
-            candidates = self._simple_to_paths.get(simple, [])
+        outer = class_name.split("$", 1)[0]
+        # Exact declared symbol, then verified outer symbol for generated classes.
+        path = self._fqcn_to_path.get(class_name) or self._fqcn_to_path.get(outer)
+        if not path and "." not in class_name:
+            candidates = list(set(self._simple_to_paths.get(class_name, [])))
             if len(candidates) == 1:
                 path = candidates[0]
-            elif len(candidates) > 1:
-                # Ambiguous — pick the one whose path segments most overlap with the FQCN
-                want_segments = outer.split(".")
-                best = max(candidates, key=lambda p: sum(
-                    1 for s in want_segments if s in p.parts
-                ))
-                path = best
 
-        if not path:
+        if not path or not self._unchanged(path):
             return None
 
         snippet = None
@@ -361,6 +343,16 @@ class SourceIndex:
 
         return path, snippet
 
+    def _unchanged(self, path):
+        try:
+            valid = hashlib.sha256(path.read_bytes()).hexdigest() == self._file_hashes.get(path)
+        except OSError:
+            valid = False
+        if not valid:
+            self.provenance["manifest_valid"] = False
+            self.provenance["source_changed"] = True
+        return valid
+
     def _read_snippet(self, path: Path, line: int, context: int) -> Optional[SourceSnippet]:
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -368,7 +360,7 @@ class SourceIndex:
         except OSError:
             return None
 
-        if not all_lines:
+        if not all_lines or line > len(all_lines):
             return None
 
         start = max(1, line - context)
