@@ -110,7 +110,9 @@ class RankingReportTest {
 
         Report report = new Report("test", T0, "cfg", new CorpusFingerprint("h", List.of(), T0, T0),
                 "default", "ENTRY_MARKER", detection.episodesEvaluated(), detection.episodesCensored(),
-                detection.marginMillis(), ranking.ranked().size(), ranking.suppressedCount(), ranking.top());
+                detection.marginMillis(), ranking.ranked().size(), ranking.suppressedCount(), ranking.top(),
+                detection.clustersTotal(), detection.clustersUnderSampled(),
+                detection.episodesSkippedUnderSampled(), 10);
 
         StringBuilder sb = new StringBuilder();
         TextReporter.render(report, sb);

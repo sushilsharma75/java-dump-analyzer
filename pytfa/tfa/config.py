@@ -9,7 +9,6 @@ from typing import Optional
 
 import yaml
 
-from .ingest import Capability, FormatProfile
 
 
 class StrategyKind(Enum):
@@ -100,9 +99,8 @@ class RankingConfig:
 
 @dataclass
 class AnalysisConfig:
-    profile: FormatProfile
-    match_threshold: float
-    sample_lines: int
+    """Run configuration. There is no format profile: the analyzer reads any log
+    layout best-effort (see tfa.extract), so nothing here describes the format."""
     segmentation: SegmentationConfig
     clustering: ClusteringConfig
     baseline: BaselineConfig
@@ -114,11 +112,6 @@ class AnalysisConfig:
         doc = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         if not isinstance(doc, dict):
             raise ValueError(f"config is not a YAML mapping: {path}")
-
-        profile = _resolve_profile(doc)
-        ingest = doc.get("ingest") or {}
-        threshold = float(ingest.get("matchThreshold", 0.95))
-        sample_lines = int(ingest.get("sampleLines", 1000))
 
         seg = doc.get("segmentation")
         if not isinstance(seg, dict):
@@ -156,24 +149,4 @@ class AnalysisConfig:
             float(w.get("clusterSize", 0.5)),
             float(r.get("benignVariantPenalty", 0.2)), int(r.get("topN", 20)))
 
-        return AnalysisConfig(profile, threshold, sample_lines, segmentation,
-                              clustering, baseline, detection, ranking)
-
-
-def _profile_from_map(name: str, m: dict) -> FormatProfile:
-    envelope = m.get("envelope")
-    if envelope is None:
-        raise ValueError("profile missing required key 'envelope'")
-    caps = {Capability(str(c).strip()) for c in (m.get("capabilities") or [])}
-    return FormatProfile(name, envelope, m.get("timestampPattern"),
-                         str(m.get("zone", "UTC")), caps)
-
-
-def _resolve_profile(doc: dict) -> FormatProfile:
-    name = str(doc.get("profile", "default"))
-    profiles = doc.get("profiles")
-    if isinstance(profiles, dict) and name in profiles:
-        return _profile_from_map(name, profiles[name])
-    if name != "default":
-        raise ValueError(f"profile '{name}' not defined under 'profiles:'")
-    return FormatProfile.default()
+        return AnalysisConfig(segmentation, clustering, baseline, detection, ranking)

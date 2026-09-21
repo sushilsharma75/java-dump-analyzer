@@ -166,6 +166,9 @@ class DetectionResult:
     margin_millis: int
     corpus_start: object
     corpus_end: object
+    clusters_total: int = 0
+    clusters_under_sampled: int = 0
+    episodes_skipped_under_sampled: int = 0
 
     def all_findings(self) -> list[Finding]:
         out: list[Finding] = []
@@ -208,8 +211,11 @@ class DetectionEngine:
 
         per_cluster: list[ClusterFindings] = []
         evaluated = censored = 0
+        under_sampled = skipped = 0
         for cluster in clusters:
             if cluster.under_sampled:
+                under_sampled += 1
+                skipped += cluster.size()
                 continue
             baseline = build_baseline(cluster, self.baseline_config)
             if baseline is None:
@@ -227,4 +233,5 @@ class DetectionEngine:
                 findings.extend(self.timing.detect(episode, baseline))
             per_cluster.append(ClusterFindings(cluster, baseline, findings))
 
-        return DetectionResult(per_cluster, evaluated, censored, margin, corpus_start, corpus_end)
+        return DetectionResult(per_cluster, evaluated, censored, margin, corpus_start, corpus_end,
+                               len(clusters), under_sampled, skipped)

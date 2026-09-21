@@ -1,9 +1,14 @@
 # tfa (Python) — Thread Flow Analyzer
 
-A pure-Python port of the Java Thread Flow Analyzer. Reconstructs per-thread
-execution flows from an offline log dump, compares flows of the same kind against
-each other, and ranks the deviations. **The population is the baseline** — no
-golden path is authored. Runs locally and offline, streaming, with flat memory.
+Reconstructs execution flows from an offline log dump, compares flows of the same
+kind against each other, and ranks the deviations. **The population is the
+baseline** — no golden path is authored. Runs locally and offline, streaming.
+
+**Any log format works — there is no format profile and no parser to configure.**
+Every line is read best-effort: timestamp, level, thread and `Class:line` where
+present, and a normalised message template as the line's identity where not.
+Nothing is ever rejected for "not matching a format", so a run can neither abort
+nor silently analyse a fraction of the corpus because a layout was unexpected.
 
 This is a faithful, feature-complete port of the Java implementation under
 `../tfa`: the same pipeline, the same config format, the same CLI commands, the
@@ -23,8 +28,7 @@ Requires Python 3.10+. Dev/test extra: `pip install -e ".[test]"`.
 ## Commands
 
 ```bash
-tfa parse <dir> [--threshold 0.95] [--sample 1000]     # ingestion statistics
-tfa detect-format <file> [--sample 500]                # infer a format profile
+tfa parse <dir>                                         # ingestion statistics
 tfa segment  <dir> --config <yaml>                      # episode distributions
 tfa cluster  <dir> --config <yaml>                      # flow-cluster distribution
 tfa baseline <dir> --config <yaml>                      # consensus baseline per cluster
@@ -32,6 +36,7 @@ tfa detect   <dir> --config <yaml>                      # raw (unranked) finding
 tfa analyze  <dir> --config <yaml> [--out report.json] [--suppressions <yaml>]
 tfa validate <dir> --config <yaml> --ground-truth <yaml>
 tfa explain  <dir> --config <yaml> --thread <id> --at <timestamp>
+tfa compare  <dir> --good <refId> --bad <refId> [--config <yaml>] [--all] [--out <file>]
 tfa serve [--port 8080]                                 # local web UI
 ```
 
@@ -42,7 +47,8 @@ tfa serve [--port 8080]                                 # local web UI
 | Module | Java counterpart |
 |---|---|
 | `tfa/model.py` | `tfa.model` — LogRecord, Episode, FlowCluster, Baseline, Finding, enums |
-| `tfa/ingest.py` | `tfa.ingest` — FormatProfile, RecordParser, FileSetReader, FormatDetector |
+| `tfa/extract.py` | *(new)* format-agnostic field extraction shared by ingest and compare |
+| `tfa/ingest.py` | `tfa.ingest` — LineExtractor, FileSetReader (no profile, no parser) |
 | `tfa/config.py` | `tfa.config` — AnalysisConfig + sub-configs, YAML loading |
 | `tfa/segment.py` | `tfa.segment` — FlowKeyStrategy + Entry/IdleGap/CorrelationId, StreamingSegmenter |
 | `tfa/cluster.py` | `tfa.cluster` — SignatureClusterer |
@@ -91,8 +97,10 @@ python -m pytest
 
 ## Notes
 
-- Config YAML is identical to the Java project (`profile`, `segmentation`,
-  `clustering`, `baseline`, `detection`, `ranking`, plus optional `profiles:`).
+- Config YAML holds only analysis settings: `segmentation`, `clustering`,
+  `baseline`, `detection`, `ranking`. There is no `profile`/`profiles`/`ingest`
+  section — the format is never configured. (The Java project under `../tfa`
+  still uses format profiles; the two have diverged here.)
 - The web UI is bound to `127.0.0.1` and has no authentication — run it only on a
   machine you control. It shells out to `python -m tfa.cli` locally and reads only
   the folder you name; nothing is uploaded.
@@ -113,3 +121,54 @@ Every record sharing an id becomes one episode, in true time order, across all
 service log files. Records with no id are dropped. `tools/make_microservice_demo.py`
 generates an order/inventory/payment corpus with a payment-service-down defect and
 proves detection end to end.
+
+## Comparing two reference flows (no population needed)
+
+`analyze` needs a population ("what did the other N runs do?"). When you have
+exactly **one known-good and one known-bad reference id**, use `compare` instead:
+
+```bash
+tfa compare /path/to/logs --good 4f3a9c2e...  --bad 8b1d5f7a...   # by trace id
+tfa compare /path/to/logs --good ORD-1001     --bad ORD-1002      # by order id
+```
+
+No `--config` is needed or used.
+
+**Any unique id works as the reference** — a trace id, an order id, a payment
+id, a session id. A business id is usually logged by only one service, so ids
+that co-occur with it (a `trace_id` on the same line, say) are followed
+automatically to pull in the rest of the flow; the report says which id was used
+and how many extra lines it brought in:
+
+```
+GOOD : ORD-1001
+       21 lines, 454 ms
+       linked via trace_id=4f3a9c2e...  (+16 lines beyond the id itself)
+```
+
+An id appearing in **both** flows is never followed, so the two flows can't merge.
+Pass `--no-link` to compare strictly on the given ids alone.
+
+**The log format does not matter.** `compare` uses no format profile, no config
+and no match-rate check - it reads raw lines from every file and derives what it
+needs best-effort: the timestamp (several common layouts; file order otherwise),
+the step identity (`Class:line` when present, otherwise a normalised message
+template with values masked), and payload fields (`key=value` and `"key": value`,
+including nested `{a=1, b=2}` blocks). Plain text, JSON lines and syslog-style
+files can even be mixed in the same folder and still stitch into one flow.
+
+Reference ids are matched as **exact whole tokens** (no spaces, no partial
+matches), across every log file. The report gives:
+
+- **THE BREAK** — the first step where the two flows part company, whether that
+  is a different branch or the same step with different data.
+- **PAYLOAD / PARAMETER DIFFERENCES** — per shared step: a field missing in the
+  bad flow, an extra field, or a differing value.
+- **ERRORS / EXCEPTIONS IN THE BAD FLOW** — with stack traces.
+- **ALIGNED FLOW** — the two call-site sequences diffed side by side
+  (`=` same, `-` only in good, `+` only in bad, `~` payload differs), so a whole
+  missing interface call (e.g. the payment leg) is visible at a glance.
+
+This covers the four ways a flow breaks: business-logic branch, exception,
+missing request parameter, and wrong payload value. Exit code is 5 when a break
+is found, 0 when the flows match. `--out` writes the same data as JSON.

@@ -205,7 +205,13 @@ async function renderReport(runId) {
   let html = `<h2>Report — top findings</h2>`;
   html += `<div class="kv">${m.profile||"?"} / ${m.strategy||"?"} · ${s.episodesEvaluated??"?"} episodes evaluated, ${s.episodesCensored??0} censored · ${s.totalFindings??0} findings`
         + ` · <a class="dl mono" href="/api/artifact?run=${runId}&name=report.json">download report.json</a></div>`;
-  if (!findings.length) html += `<div class="panel">Clean run — nothing flagged in the top ${ (m && s.suppressedCount) || ""} .</div>`;
+  if (!findings.length) {
+    const reason = (s.noFindingsReason || "").trim();
+    const clean = (s.episodesEvaluated || 0) > 0;
+    html += `<div class="panel"${clean ? "" : ' style="border-left:4px solid var(--div)"'}>`
+          + `<b>${clean ? "Clean run" : "Nothing was analysed"}</b>`
+          + `<pre style="background:transparent;color:inherit;padding:8px 0 0;font-size:13px">${esc(reason)}</pre></div>`;
+  }
   findings.forEach(f => html += cardHtml(f));
   $("#report").innerHTML = html;
 }

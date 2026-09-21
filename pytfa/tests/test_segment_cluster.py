@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from tfa.cluster import SignatureClusterer
-from tfa.ingest import FileSetReader, FormatProfile, ParseStats, RecordParser
+from tfa.ingest import FileSetReader, ParseStats
 from tfa.model import Episode, LogRecord, TerminalStatus
 from tfa.segment import (CorrelationIdStrategy, EntryMarkerStrategy, FlowKeyStrategy,
                          IdleGapStrategy, StreamingSegmenter)
@@ -112,7 +112,7 @@ FLOWS = [
 
 
 def _run(directory, strategy):
-    reader = FileSetReader(directory, RecordParser(FormatProfile.default()), ParseStats())
+    reader = FileSetReader(directory, ParseStats())
     return StreamingSegmenter(strategy).segment_to_list(reader.records())
 
 
