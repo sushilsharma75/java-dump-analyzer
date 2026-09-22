@@ -455,6 +455,7 @@ class LLMSummaryResponse(BaseModel):
 class JobStatus(BaseModel):
     job_id: str
     status: str  # "queued" | "running" | "done" | "error"
+    stage: str = "Queued"
     bytes_processed: int = 0
     bytes_total: int = 0
     records_seen: int = 0

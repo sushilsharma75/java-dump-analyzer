@@ -1,12 +1,12 @@
 """Local persistent analyses and object indexes; no API credentials are stored."""
 
 import json
-import os
 import re
 import uuid
-from pathlib import Path
 
-ROOT = Path(os.environ.get("ANALYSIS_DIR", "/tmp/postmortem/analyses"))
+from .paths import analysis_directory
+
+ROOT = analysis_directory()
 ROOT.mkdir(parents=True, exist_ok=True)
 
 

@@ -214,6 +214,7 @@ def parse_heap_dump(
     source=None,
     trace_graph: bool = True,
     index_path=None,
+    stage_callback=None,
 ) -> HeapDumpAnalysis:
     """
     Stream-parse an .hprof file.
@@ -224,7 +225,10 @@ def parse_heap_dump(
         progress_callback: optional callable(bytes_processed, records_seen, instances_seen).
             Called periodically so a UI can show a progress bar.
         progress_interval_records: how often (in records) to fire the callback.
+        stage_callback: optional callable(stage_name) for post-parse work.
     """
+    stage = stage_callback or (lambda message: None)
+    stage("Parsing heap records")
     reader = _Reader(fp)
     file_size = _stream_size(fp)
 
@@ -391,6 +395,7 @@ def parse_heap_dump(
     # class share one field layout, so the per-instance payload is exact.
     instance_size = _shallow_by_class(instance_count, instance_size, scan, model, id_size)
 
+    stage("Building class histogram")
     # --- Build histogram ---
     aggregate_count: Dict[str, int] = defaultdict(int)
     aggregate_size: Dict[str, int] = defaultdict(int)
@@ -434,6 +439,7 @@ def parse_heap_dump(
     # If a source repo is attached, find where the user's own code references the
     # biggest classes — answers "which of MY methods creates/holds this?".
     if source is not None:
+        stage("Matching classes to source")
         _attach_references(source, histogram_by_size[:8])
         _attach_references(source, histogram_by_count[:8])
 
@@ -449,17 +455,30 @@ def parse_heap_dump(
     stages = []
     stages.append(AnalysisStage(stage="histogram", status="partial" if truncated else "completed"))
     indexed = False
-    if index_path and not truncated:
+    # Graph work scales with object count as well as dump bytes. Disk-backed
+    # storage bounds RAM, not runtime; keep it off the large-report critical path.
+    index_gate = _gate_reason("object index", enabled=bool(index_path),
+        truncated=truncated, file_size=file_size,
+        limit=_heap_limit("HEAP_INDEX_MAX_BYTES", 512 * 1024 * 1024),
+        seekable=_seekable(fp), env_hint="HEAP_INDEX_MAX_BYTES")
+    object_limit = _heap_limit("HEAP_INDEX_MAX_OBJECTS", 1_000_000)
+    if not index_gate and total_instances > object_limit:
+        index_gate = SkippedAnalysis(stage="object index", status="skipped",
+            reason=f"{total_instances:,} objects exceeds HEAP_INDEX_MAX_OBJECTS={object_limit:,}; "
+                   "full histogram and source findings remain available")
+    if not index_gate:
         try:
             from .heap_index import build_index
-            build_index(fp, index_path)
+            build_index(fp, index_path, model=model, stage_callback=stage)
             indexed = True
             stages.append(AnalysisStage(stage="object index", status="completed"))
         except Exception as e:
             stages.append(AnalysisStage(stage="object index", status="failed", reason=str(e)))
             skipped.append(SkippedAnalysis(stage="object index", status="failed", reason=str(e)))
     else:
-        stages.append(AnalysisStage(stage="object index", status="skipped", reason="Partial input or no persistent index requested"))
+        stages.append(AnalysisStage(stage="object index", status="skipped", reason=index_gate.reason))
+        if index_path:
+            skipped.append(index_gate)
 
     findings = _build_heap_findings(histogram_by_count, histogram_by_size, total_instances, file_size)
 
@@ -489,6 +508,7 @@ def parse_heap_dump(
         if leaf:
             try:
                 from .heap_graph import trace_retention
+                stage("Tracing retention")
                 rf = trace_retention(fp, leaf, source=source)
                 if rf:
                     findings = [f for f in findings if f.title != "No obvious red flags"]
@@ -507,6 +527,7 @@ def parse_heap_dump(
     if indexed and os.environ.get("HEAP_WASTE_TRACE", "1") != "0":
         try:
             from .heap_index import duplicate_arrays
+            stage("Finding duplicate arrays")
             duplicates = duplicate_arrays(index_path)
             wasted_bytes = duplicates["potential_duplicate_bytes"]
             if wasted_bytes:
@@ -521,6 +542,7 @@ def parse_heap_dump(
         try:
             from .heap_waste import find_wasted_memory
             total_shallow = sum(h.shallow_size_bytes for h in histogram_by_size)
+            stage("Sampling duplicate arrays")
             waste_findings, wasted_bytes = find_wasted_memory(fp, total_shallow)
             if waste_findings:
                 findings = [f for f in findings if f.title != "No obvious red flags"]
@@ -538,13 +560,18 @@ def parse_heap_dump(
     dom_gate = _gate_reason("dominator tree (exact retained sizes, leak suspects, "
                             "unreachable-object accounting)",
                             enabled=True, truncated=truncated, file_size=file_size,
-                            limit=(file_size + 1 if indexed and os.environ.get("HEAP_DISK_DOMINATORS", "1") == "1" and dominator_max_bytes() > 0 else dominator_max_bytes()), seekable=_seekable(fp),
+                            limit=dominator_max_bytes(), seekable=_seekable(fp),
                             env_hint="HEAP_DOMINATOR_MAX_BYTES")
+    dom_objects = _heap_limit("HEAP_DOMINATOR_MAX_OBJECTS", 1_000_000)
+    if not dom_gate and total_instances > dom_objects:
+        dom_gate = SkippedAnalysis(stage="dominator tree (exact retained sizes, leak suspects, unreachable-object accounting)",
+            status="skipped", reason=f"{total_instances:,} objects exceeds HEAP_DOMINATOR_MAX_OBJECTS={dom_objects:,}")
     if dom_gate:
         skipped.append(dom_gate)
     else:
         try:
             from .heap_dominators import compute_retained
+            stage("Computing retained sizes")
             rr = compute_retained(fp, model=model, index_path=index_path if indexed else None, source=source)
             dominator_entries = rr.entries
             reachable_bytes = rr.reachable_bytes
@@ -570,6 +597,7 @@ def parse_heap_dump(
     deployments, thread_ownership, duplicate_classes = [], None, []
     try:
         from .heap_deployments import analyze_deployments, find_duplicate_classes
+        stage("Attributing deployments and threads")
         deployments, thread_ownership, dep_findings = analyze_deployments(
             scan, instance_count, instance_size,
             fp=fp if (_seekable(fp) and not max_bytes) else None,
@@ -605,6 +633,7 @@ def parse_heap_dump(
     for name in ("retention tracing (what holds the top consumer)", "duplicate-string / duplicate-buffer scan", "dominator tree (exact retained sizes, leak suspects, unreachable-object accounting)", "deployment attribution"):
         failure = next((x for x in skipped if x.stage == name or (name.startswith("dominator") and x.stage.startswith("dominator"))), None)
         stages.append(AnalysisStage(stage=name, status=failure.status if failure else ("partial" if (name.startswith("retention") or (name.startswith("duplicate-string") and not indexed)) else "completed"), reason=failure.reason if failure else ("Bounded heuristic/sample, not exhaustive" if (name.startswith("retention") or (name.startswith("duplicate-string") and not indexed)) else None)))
+    stage("Finalizing report")
     stamp(findings)
     return HeapDumpAnalysis(
         analysis_id=uuid.uuid4().hex, capture={"captured_at": captured_at},
@@ -777,6 +806,13 @@ def _ref_field_counts(scan) -> Dict[int, int]:
     for cid in list(meta):
         count(cid)
     return memo
+
+
+def _heap_limit(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
 
 
 def _graph_max_bytes() -> int:

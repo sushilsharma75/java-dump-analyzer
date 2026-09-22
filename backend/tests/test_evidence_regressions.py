@@ -344,7 +344,12 @@ def test_disk_dominator_gate_and_explicit_disable(tmp_path, monkeypatch):
     monkeypatch.setenv("HEAP_DOMINATOR_MAX_BYTES", "1")
     monkeypatch.setenv("HEAP_DISK_DOMINATORS", "1")
     result = parse_heap_dump(io.BytesIO(b.build()), index_path=tmp_path / "full.sqlite")
-    assert result.dominators
+    # A persistent index must not bypass an explicit runtime gate.
+    assert not result.dominators
+    assert any(s.stage.startswith("dominator") and s.status == "skipped" for s in result.stages)
+    monkeypatch.setenv("HEAP_DOMINATOR_MAX_BYTES", str(512 * 1024 * 1024))
+    enabled = parse_heap_dump(io.BytesIO(b.build()), index_path=tmp_path / "enabled.sqlite")
+    assert enabled.dominators
     monkeypatch.setenv("HEAP_DOMINATOR", "0")
     disabled = parse_heap_dump(
         io.BytesIO(b.build()), index_path=tmp_path / "disabled.sqlite"

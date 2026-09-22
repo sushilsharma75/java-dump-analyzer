@@ -56,7 +56,7 @@ export default function HeapProgress({ phase, uploadProgress, jobStatus, filenam
           label="02 · Parse"
           status={
             phase === 'parsing'
-              ? (job.status === 'error' ? 'error' : 'active')
+              ? (job.status === 'error' ? 'error' : parsePct >= 100 ? 'done' : 'active')
               : phase === 'done' ? 'done' : 'pending'
           }
           pct={phase === 'parsing' || phase === 'done' ? parsePct : 0}
@@ -67,11 +67,17 @@ export default function HeapProgress({ phase, uploadProgress, jobStatus, filenam
           }
         />
 
+        {phase === 'parsing' && job.stage && (
+          <p role="status" className="font-mono text-sm text-bone-400">
+            {job.stage}{job.status === 'running' && parsePct >= 100 ? ' · Analysis still running' : ''}
+          </p>
+        )}
+
         {/* Stats grid */}
         {phase === 'parsing' && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-4">
             <Stat label="elapsed" value={fmtDuration(job.elapsed_seconds)} />
-            <Stat label="eta" value={fmtDuration(job.eta_seconds)} />
+            <Stat label="parse eta" value={fmtDuration(parsePct >= 100 ? null : job.eta_seconds)} />
             <Stat label="records" value={(job.records_seen || 0).toLocaleString()} />
             <Stat label="instances" value={(job.instances_seen || 0).toLocaleString()} />
           </div>

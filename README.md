@@ -14,6 +14,10 @@ and source references, and exposes incomplete analysis instead of calling it hea
 
 ## Start locally
 
+Use 64-bit Python 3.13 and Node.js 22.
+
+### Linux / macOS
+
 ```bash
 cd backend
 python -m venv .venv
@@ -30,10 +34,66 @@ npm run dev
 ```
 
 The React/webpack frontend serves on port 5173 and proxies `/api` to port 8000.
-`npm run build` creates the production frontend. Python 3.10+ is required. A local
+`npm run build` creates the production frontend. A local
 JDK 17+ with `java` and `javac` enables Java AST indexing and the real-JVM integration
 test. Without a compiler, source indexing falls back to explicitly labelled lexical
 scopes. No application code or annotation processors are executed by source indexing.
+
+### Windows (PowerShell)
+
+From the repository directory, start the backend:
+
+```powershell
+cd backend
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+In a second PowerShell terminal, from the repository directory:
+
+```powershell
+cd frontend
+npm.cmd ci
+npm.cmd run dev
+```
+
+Open `http://localhost:5173`. These commands do not require virtual-environment
+activation or a change to PowerShell's execution policy. `npm.cmd` avoids a blocked
+`npm.ps1` shim. Install a JDK 17+ and put `java.exe` and `javac.exe` on `PATH` for
+Java AST source matching; Git for Windows is optional for repository clone fallback.
+No WSL, Docker, or separately installed SQLite server is required.
+
+By default, uploads use the operating system's temporary directory plus
+`postmortem`, and saved analyses use its `analyses` subdirectory. On Windows this
+normally resolves under `%TEMP%`; on Linux it is normally `/tmp`. To choose other
+storage locations, set these variables **before starting the backend**:
+
+```powershell
+$env:DUMP_TMP_DIR = 'D:\StackAnalyser\uploads'
+$env:ANALYSIS_DIR = 'D:\StackAnalyser\analyses'
+```
+
+Use existing drives with writable space for your dumps. The application creates
+the directories. Heap limits and stage reporting are identical on both platforms;
+see the configuration table below. After updating the application, restart the
+backend and frontend. For a deployed frontend, rebuild with `npm.cmd run build`
+and serve the updated `frontend/dist` output through your existing web server.
+
+To run the checks on Windows:
+
+```powershell
+# From the repository directory
+.\backend\.venv\Scripts\python.exe -m pytest backend/tests
+cd frontend
+npm.cmd test
+npm.cmd run build
+```
+
+The [CI workflow](.github/workflows/tests.yml) runs backend tests (including a real
+HotSpot heap and Java source indexing), frontend tests and the production build on
+both Windows and Linux. Windows-specific regressions cover file sharing, paths
+with spaces/non-ASCII characters, CRLF source files and upload cleanup.
 
 This is a single-user, trusted-host application. Source and dump path endpoints read
 server-side files. There is no authentication or multi-tenant isolation.
@@ -122,8 +182,9 @@ paths, source manifests and browser keys remain compatible with earlier analyses
 1. Attach the source used to build the deployed application: ZIP, local directory,
    or Git repository. Include the source manifest described below when available.
 2. Analyze a thread dump, heap dump, and optional GC log from the same incident.
-   Full heap analysis creates a persistent object index. Quick mode reads only a
-   prefix and deliberately cannot support a complete diagnosis.
+   Full heap analysis creates a persistent object index within the configured
+   byte/object limits and reports skipped stages above them. Quick mode reads only
+   a prefix and deliberately cannot support a complete diagnosis.
 3. In **Evidence and investigation**, enter process identity, process start time,
    capture time, and build ID. Process identity should include the host/container
    identity as well as PID. Use ISO timestamps with timezones.
@@ -166,8 +227,12 @@ until explicitly deleted. Treat that directory as sensitive diagnostic data.
 
 ## Heap graph and size semantics
 
-Full API analyses build the object/edge index on disk. Object bodies and large arrays
-are processed in bounded chunks. SQLite holds incoming/outgoing indexes, roots,
+Full API analyses always stream the complete dump for the histogram (unless quick
+mode is selected). Automatic object/edge indexing is limited to 512 MiB and one
+million objects by default. Above either limit, the report still includes the full
+histogram, source references, static-field findings and deployment attribution;
+object browsing is explicitly marked skipped. Object bodies and large arrays
+within the indexed workflow are processed in bounded chunks. SQLite holds incoming/outgoing indexes, roots,
 class metadata, thread records, and the dominator traversal state. Retention uses an
 iterative reverse-postorder algorithm; the graph does not need to fit in Python RAM.
 
@@ -185,17 +250,21 @@ recover every JVM's field padding, compact headers, alignment flags, or class-ob
 shallow overhead. Retained totals are exact for the constructed graph and modeled
 shallow sizes; they must not be advertised as universally equal to MAT results.
 
-The default full API workflow runs disk dominators even above the old 512 MB gate.
-Disable `HEAP_DISK_DOMINATORS` to restore that size gate. Low-level calls without a
-persistent index still honor `HEAP_DOMINATOR_MAX_BYTES`. The bounded heuristic tracer
-is a separate optional stage, not a replacement for an exhaustive GC-root search.
+Exact retained-size analysis respects `HEAP_DOMINATOR_MAX_BYTES` (512 MiB) and
+`HEAP_DOMINATOR_MAX_OBJECTS` (one million), including when an index exists. The old
+`HEAP_DISK_DOMINATORS` switch no longer bypasses these limits. Administrators can
+explicitly raise the byte and object limits after benchmarking their hardware;
+disk-backed storage bounds RAM usage, not execution time. Skipped retained sizes
+are unavailable, not zero. The bounded heuristic tracer is a separate optional
+stage, not a replacement for an exhaustive GC-root search.
 
 Large-dump support means the parser/index accepts files up to the API's 50 GiB limit;
 it is **not a measured throughput or disk-space guarantee at 25–50 GiB**. SQLite
 indexes can substantially exceed dump size, and convergence time depends on graph
 shape. Use a dedicated volume, benchmark representative dumps, and inspect stage
 status. Upload progress covers transfer; parse byte progress is not an ETA for the
-subsequent graph and dominator stages.
+subsequent graph and dominator stages. The progress screen reports the active
+stage and hides parse ETA once parsing finishes.
 
 Every stage reports `completed`, `partial`, `skipped`, or `failed`. Failed graph,
 duplicate, or attribution stages remain visible alongside usable histogram results.
@@ -298,11 +367,13 @@ cleaning up its transient job record.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DUMP_TMP_DIR` | `/tmp/postmortem` | Uploaded dump staging |
-| `ANALYSIS_DIR` | `/tmp/postmortem/analyses` | Persisted JSON and SQLite indexes; configure a durable volume |
-| `HEAP_DISK_DOMINATORS` | `1` | Full indexed analyses compute dominators without the old file-size gate |
+| `DUMP_TMP_DIR` | OS temp directory + `postmortem` | Uploaded dump staging |
+| `ANALYSIS_DIR` | OS temp directory + `postmortem/analyses` | Persisted JSON and SQLite indexes; configure a durable volume |
+| `HEAP_INDEX_MAX_BYTES` | `536870912` | Automatic persistent object-index size ceiling; `0` disables it |
+| `HEAP_INDEX_MAX_OBJECTS` | `1000000` | Automatic index object-count ceiling |
 | `HEAP_DOMINATOR` | `1` | `0` disables dominator computation |
-| `HEAP_DOMINATOR_MAX_BYTES` | `536870912` | Non-disk/opt-out gate, in bytes |
+| `HEAP_DOMINATOR_MAX_BYTES` | `536870912` | Retained-size analysis ceiling in bytes, also enforced with a persistent index |
+| `HEAP_DOMINATOR_MAX_OBJECTS` | `1000000` | Retained-size analysis object-count ceiling, including temporary indexes |
 | `HEAP_GRAPH_TRACE` | `1` | Bounded heuristic retention tracer |
 | `HEAP_GRAPH_MAX_BYTES` | `2147483648` | Heuristic tracer gate, in bytes |
 | `HEAP_WASTE_TRACE` | `1` | Duplicate-array analysis |

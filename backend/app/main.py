@@ -76,7 +76,9 @@ MAX_SYNC_HEAP_DUMP_BYTES = 200 * 1024 * 1024        # 200 MB sync threshold
 MAX_HEAP_DUMP_BYTES = 50 * 1024 * 1024 * 1024       # 50 GB
 MAX_SOURCE_ZIP_BYTES = 500 * 1024 * 1024            # 500 MB
 
-TMP_DIR = Path(os.environ.get("DUMP_TMP_DIR", "/tmp/postmortem"))
+from .paths import dump_directory
+
+TMP_DIR = dump_directory()
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -216,6 +218,8 @@ async def analyze_heap_sync(
         log.exception("Heap analysis failed")
         raise HTTPException(500, f"Analysis failed: {e}")
     finally:
+        # Windows cannot delete an open file after a rejected/interrupted upload.
+        tmp.close()
         try:
             os.unlink(tmp.name)
         except OSError:
@@ -310,11 +314,13 @@ async def _run_heap_parse(
             with open(path, "rb") as fp:
                 max_bytes = 256 * 1024 * 1024 if quick else None
                 return parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index,
+                                       stage_callback=JOBS.stage_callback(job_id),
                                        index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
         result = await asyncio.to_thread(_do_parse)
         result.analysis_id = identifier
         if any(x.stage == "object index" and x.status == "completed" for x in result.stages):
             result.object_index_id = identifier
+        JOBS.stage_callback(job_id)("Saving report")
         artifacts.save(result, "heap")
         JOBS.mark_done(job_id, result.model_dump())
         log.info("Heap parse complete: job=%s", job_id)

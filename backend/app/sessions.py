@@ -80,6 +80,7 @@ class JobStore:
             self._jobs[job_id] = {
                 "job_id": job_id,
                 "status": "queued",
+                "stage": "Queued",
                 "bytes_processed": 0,
                 "bytes_total": total_bytes,
                 "records_seen": 0,
@@ -101,7 +102,10 @@ class JobStore:
             # Refresh derived fields
             job = dict(job)  # shallow copy so the caller can't mutate state
             job["elapsed_seconds"] = time.time() - job["started_at"]
-            if job["bytes_processed"] > 0 and job["bytes_total"] > 0 and job["status"] == "running":
+            job["eta_seconds"] = None
+            if (0 < job["bytes_processed"] < job["bytes_total"]
+                    and job["status"] == "running"
+                    and job["stage"] == "Parsing heap records"):
                 rate = job["bytes_processed"] / max(job["elapsed_seconds"], 0.01)
                 remaining = job["bytes_total"] - job["bytes_processed"]
                 job["eta_seconds"] = remaining / rate if rate > 0 else None
@@ -119,6 +123,14 @@ class JobStore:
                 job["instances_seen"] = instances
         return _cb
 
+    def stage_callback(self, job_id: str) -> Callable[[str], None]:
+        def _cb(stage: str):
+            with self._lock:
+                job = self._jobs.get(job_id)
+                if job:
+                    job["stage"] = stage
+        return _cb
+
     def mark_running(self, job_id: str, tempfile: Optional[str] = None) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -133,6 +145,7 @@ class JobStore:
             job = self._jobs.get(job_id)
             if job:
                 job["status"] = "done"
+                job["stage"] = "Complete"
                 job["result"] = result
                 job["bytes_processed"] = job["bytes_total"]
 

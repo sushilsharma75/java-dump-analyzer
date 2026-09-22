@@ -97,7 +97,9 @@ class SourceIndex:
                     continue
 
                 try:
-                    content = path.read_text(encoding="utf-8", errors="replace")
+                    # Keep CRLF offsets aligned with javac's source positions.
+                    with path.open(encoding="utf-8", errors="replace", newline="") as source_file:
+                        content = source_file.read()
                 except OSError:
                     continue
                 if not path.resolve().is_relative_to(self.root):
@@ -154,7 +156,7 @@ class SourceIndex:
         manifest = self.root / "postmortem-source.json"
         if manifest.is_file():
             try:
-                declared = json.loads(manifest.read_text())
+                declared = json.loads(manifest.read_text(encoding="utf-8"))
                 valid = declared.get("source_sha256") == digest.hexdigest() and not self.provenance.get("truncated")
                 self.provenance.update(manifest_valid=bool(valid), build_id=declared.get("build_id"))
             except (ValueError, OSError):
@@ -274,7 +276,7 @@ class SourceIndex:
                   "build_verified": False, "source_provenance": self.provenance}
         if len(methods) == 1:
             m = methods[0]
-            lines = path.read_text(errors="replace").splitlines()
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             result["method"] = {"start_line": m["line"], "end_line": m["end_line"],
                                 "lines": lines[m["line"] - 1:min(m["end_line"], m["line"] + 199)],
                                 "truncated": m["end_line"] - m["line"] >= 200}
@@ -284,7 +286,7 @@ class SourceIndex:
         selected_fields = [f for f in fields if f["line"] == line] if line else []
         if selected_fields:
             clean = self._symbols[path]["clean"]
-            lines = path.read_text(errors="replace").splitlines()
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             related = []
             for m in self._symbols[path]["methods"]:
                 body = clean[m["start"]:m["end"]]
@@ -375,7 +377,7 @@ class SourceIndex:
 
     def relative_path(self, abs_path: Path) -> str:
         try:
-            return str(abs_path.relative_to(self.root))
+            return abs_path.relative_to(self.root).as_posix()
         except ValueError:
             return str(abs_path)
 

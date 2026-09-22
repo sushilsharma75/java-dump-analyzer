@@ -113,17 +113,20 @@ def java_ast(paths):
         )
     results = {}
     for offset in range(0, len(paths), 500):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", encoding="utf-8"
-        ) as manifest:
-            manifest.write(
-                "\n".join(str(p.resolve()) for p in paths[offset : offset + 500])
+        # Close the manifest before Java opens it: NamedTemporaryFile's default
+        # sharing flags prevent a second process from opening it on Windows.
+        with tempfile.TemporaryDirectory(prefix="postmortem-source-") as work:
+            manifest = Path(work) / "sources.txt"
+            manifest.write_text(
+                "\n".join(str(p.resolve()) for p in paths[offset : offset + 500]),
+                encoding="utf-8",
             )
-            manifest.flush()
             run = subprocess.run(
-                ["java", "-Xmx256m", "-cp", str(cache), "SourceSymbols", manifest.name],
+                ["java", "-Xmx256m", "-cp", str(cache), "SourceSymbols", str(manifest)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
         if run.returncode:

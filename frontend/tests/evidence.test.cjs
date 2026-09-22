@@ -83,3 +83,17 @@ test('Stored procedure source evidence and suggestions appear in UI and export',
     for (const text of ['shop.review_orders', 'bigint', 'varchar(20)', 'Align parameter types']) assert.ok(html.includes(text), text)
   }
 })
+
+
+test('heap progress distinguishes parsing from remaining analysis', () => {
+  const HeapProgress = require('../src/components/HeapProgress.jsx').default
+  const html = renderToString(React.createElement(HeapProgress, {
+    phase: 'parsing', filename: 'dump.hprof',
+    jobStatus: { status: 'running', bytes_total: 100, bytes_processed: 100,
+      stage: 'Computing retained sizes', eta_seconds: 0 },
+  }))
+  assert.ok(html.includes('Computing retained sizes'))
+  assert.ok(html.includes('Analysis still running'))
+  assert.ok(html.includes('parse eta'))
+  assert.ok(!html.includes('0.0s'))
+})

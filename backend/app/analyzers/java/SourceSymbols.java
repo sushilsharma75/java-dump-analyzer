@@ -2,6 +2,8 @@ import com.sun.source.tree.*;
 import com.sun.source.util.*;
 import javax.tools.*;
 import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
+import java.io.PrintStream;
 import java.util.*;
 
 /** Parse source without resolving dependencies; emit declared AST scopes as JSON lines. */
@@ -17,11 +19,12 @@ public class SourceSymbols {
         return b.append('"').toString();
     }
     public static void main(String[] args) throws Exception {
+        System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
         JavaCompiler compiler=ToolProvider.getSystemJavaCompiler();
         if(compiler==null) throw new IllegalStateException("JDK compiler required");
         List<String> files=Files.readAllLines(Path.of(args[0]));
         DiagnosticCollector<JavaFileObject> diagnostics=new DiagnosticCollector<>();
-        try(StandardJavaFileManager fm=compiler.getStandardFileManager(diagnostics,null,null)) {
+        try(StandardJavaFileManager fm=compiler.getStandardFileManager(diagnostics,null,StandardCharsets.UTF_8)) {
             JavacTask task=(JavacTask)compiler.getTask(null,fm,diagnostics,List.of("-proc:none"),null,fm.getJavaFileObjectsFromStrings(files));
             Iterable<? extends CompilationUnitTree> units=task.parse();
             SourcePositions positions=Trees.instance(task).getSourcePositions();

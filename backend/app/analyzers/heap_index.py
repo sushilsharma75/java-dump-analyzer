@@ -38,10 +38,12 @@ def json_primitive(value, ty):
     return value
 
 
-def build_index(fp, path, progress=None, model=None):
+def build_index(fp, path, progress=None, model=None, stage_callback=None):
     """Two passes: catalog records, then decode field references using complete layouts."""
     db = connect(path)
+    stage = stage_callback or (lambda message: None)
     try:
+        stage("Indexing object records")
         db.executescript("""
         CREATE TABLE objects(oid TEXT PRIMARY KEY, class_id TEXT, kind TEXT, shallow INTEGER, length INTEGER, offset INTEGER, values_json TEXT);
         CREATE TABLE edges(src TEXT, dst TEXT, field TEXT, strength TEXT);
@@ -84,6 +86,7 @@ def build_index(fp, path, progress=None, model=None):
             return struct.unpack(">" + fmt, reader.read(TYPE_SIZES[ty]))[0]
 
         records = 0
+        subrecords = 0
         while reader.pos < file_size:
             tag = reader.u1()
             reader.u4()
@@ -242,6 +245,10 @@ def build_index(fp, path, progress=None, model=None):
                         raise ValueError(
                             f"Unsupported HPROF heap tag {sub:#x} at {reader.pos - 1}"
                         )
+                    subrecords += 1
+                    if subrecords % 10000 == 0:
+                        db.commit()
+                        stage(f"Indexing object records: {subrecords:,}")
                     if reader.pos > end:
                         raise ValueError("Heap subrecord exceeds segment")
             else:
@@ -260,17 +267,12 @@ def build_index(fp, path, progress=None, model=None):
                 (_normalize_class_name(row["name"]), row["cid"]),
             )
         classes = {r["cid"]: dict(r) for r in db.execute("SELECT * FROM classes")}
-        strings = {
-            r["id"]: r["value"]
-            for r in db.execute(
-                "SELECT * FROM strings WHERE id IN (SELECT substr(field,8) FROM edges WHERE field LIKE 'static:%')"
-            )
-        }
-        for sid, name in strings.items():
-            db.execute(
-                "UPDATE edges SET field=? WHERE field=?",
-                ("static:" + name, "static:" + sid),
-            )
+        # Resolve static names in one scan, not a full edges scan per name.
+        db.execute("""
+            UPDATE edges SET field='static:' || COALESCE(
+                (SELECT value FROM strings WHERE id=substr(edges.field,8)),
+                substr(field,8)) WHERE field LIKE 'static:%'
+        """)
         layout_cache = {}
 
         def layout(cid):
@@ -297,8 +299,14 @@ def build_index(fp, path, progress=None, model=None):
             return fields
 
         count = 0
-        for obj in db.execute("SELECT * FROM objects WHERE kind!='class'"):
-            if reader.pos != obj["offset"]:
+        stage("Decoding object references")
+        # Row insertion order is dump order. Keep that explicit: consuming gaps
+        # through the reader preserves read-ahead instead of re-reading a 4 MiB
+        # block for every tiny object payload.
+        for obj in db.execute("SELECT * FROM objects WHERE kind!='class' ORDER BY rowid"):
+            if obj["offset"] >= reader.pos:
+                reader.skip(obj["offset"] - reader.pos)
+            else:
                 fp.seek(obj["offset"])
                 reader._buf = b""
                 reader._buf_pos = 0
@@ -371,8 +379,10 @@ def build_index(fp, path, progress=None, model=None):
             count += 1
             if count % 5000 == 0:
                 db.commit()
+                stage(f"Decoding object references: {count:,}")
                 if progress:
                     progress(count)
+        stage("Building reference lookup indexes")
         db.executescript(
             "CREATE INDEX outgoing ON edges(src); CREATE INDEX incoming ON edges(dst); CREATE INDEX root_oid ON roots(oid); CREATE INDEX object_class ON objects(class_id);"
         )
