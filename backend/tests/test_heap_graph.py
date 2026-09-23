@@ -57,3 +57,18 @@ def test_tracer_returns_none_when_unheld():
         b.instance(leaf, body=b"\x00" * 4)
     finding = trace_retention(io.BytesIO(b.build()), "com.example.Leaf")
     assert finding is None
+
+
+def test_deep_flag_lifts_size_ceiling_but_not_disable(source_index, monkeypatch):
+    # A dump above the retention-tracing ceiling is skipped unless the analysis opts in.
+    monkeypatch.setenv("HEAP_GRAPH_MAX_BYTES", "1")
+    data = _holder_chain_dump()
+    skipped = parse_heap_dump(io.BytesIO(data), source=source_index)
+    assert not any("Retention path" in f.title for f in skipped.findings)
+    assert any("deep retention analysis" in (s.enable_hint or "") for s in skipped.skipped_analyses)
+    deep = parse_heap_dump(io.BytesIO(data), source=source_index, deep=True)
+    assert any("Retention path" in f.title for f in deep.findings)
+    # Configuration that disables tracing still wins over the per-analysis opt-in.
+    monkeypatch.setenv("HEAP_GRAPH_TRACE", "0")
+    disabled = parse_heap_dump(io.BytesIO(data), source=source_index, deep=True)
+    assert not any("Retention path" in f.title for f in disabled.findings)

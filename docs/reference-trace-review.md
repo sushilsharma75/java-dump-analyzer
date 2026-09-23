@@ -56,3 +56,29 @@ recorded frame context to inspect code beyond the declaration snippet.
 Validation covers static retention, local-root frame association, declaring-class
 method selection, stale-source removal, late source attachment, frontend trace
 rendering, and the existing real HotSpot heap integration test.
+
+## Server log correlation
+
+Attached server logs are correlated automatically with heap/thread dumps
+(`backend/app/analyzers/incident.py`). Events match on exact frame class and
+method, full logger class name, or thread name; application classes only for heap
+histogram entries, because JDK classes such as `String` or `byte[]` appear in
+unrelated frames everywhere. A dominator entry's root-path classes are used when
+dominators ran.
+
+Corrected on 2026-09-23: log timestamps without an offset (the Logback/Log4j
+default) were stored unaligned, while the heap capture time is always aligned.
+The ±window filter then discarded every event, producing
+"0 matching log events". Now:
+
+- The capture-time window is applied only when at least half of the log events
+  have aligned timestamps. Otherwise a visible warning explains it was not
+  applied. The upload's timezone field is pre-filled from the browser.
+- If the window contains no matching events, whole-log matches are shown,
+  labelled unaligned and low confidence, with a visible warning.
+- The window is selectable in the report (±5 minutes to ±24 hours).
+
+Remaining limits: abbreviated logger names (`c.a.OrderCache`) do not match;
+matches are shared context, not causation. A heap-only analysis above the
+dominator limits has only histogram classes to match, so attaching a thread dump
+substantially improves results.

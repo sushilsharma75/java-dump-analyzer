@@ -115,7 +115,7 @@ export default function App() {
   }, [])
 
   // --- Heap upload (sync or async based on size) ---
-  const handleHeapUpload = useCallback(async (file, quick = false) => {
+  const handleHeapUpload = useCallback(async (file, quick = false, deep = false) => {
     setError(null)
     setFilename(file.name)
 
@@ -123,7 +123,7 @@ export default function App() {
     if (file.size < ASYNC_HEAP_THRESHOLD) {
       setLoading(true)
       try {
-        const result = await analyzeHeapDumpSync(file, quick, sourceSession?.session_id || null)
+        const result = await analyzeHeapDumpSync(file, quick, sourceSession?.session_id || null, deep)
         setAnalysis(result)
         setHeapAnalysis(result)
         setView('heap')
@@ -143,7 +143,7 @@ export default function App() {
     try {
       const initial = await analyzeHeapDumpAsync(file, quick, (p) => {
         setUploadProgress(p)
-      }, sourceSession?.session_id || null)
+      }, sourceSession?.session_id || null, deep)
       activeJobRef.current = initial.job_id
       setHeapPhase('parsing')
       setJobStatus(initial)
@@ -156,7 +156,7 @@ export default function App() {
   }, [sourceSession])
 
   // --- Server-side heap path ---
-  const handleHeapPath = useCallback(async (path, quick = false) => {
+  const handleHeapPath = useCallback(async (path, quick = false, deep = false) => {
     setError(null)
     setFilename(path)
     setView('heap_progress')
@@ -164,7 +164,7 @@ export default function App() {
     setUploadProgress({ loaded: 1, total: 1 })  // mark upload as complete
     setJobStatus(null)
     try {
-      const initial = await analyzeHeapDumpPath(path, quick, sourceSession?.session_id || null)
+      const initial = await analyzeHeapDumpPath(path, quick, sourceSession?.session_id || null, deep)
       activeJobRef.current = initial.job_id
       setJobStatus(initial)
       startPolling(initial.job_id)

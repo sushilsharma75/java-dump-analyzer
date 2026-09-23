@@ -190,7 +190,7 @@ test('automatic correlation includes attachments and ignores superseded response
     const cancel = startIncident({ log: { analysis_id: 'log' }, thread: { analysis_id: 'old-thread' }, sourceSession: { session_id: 'src' } }, callbacks)
     cancel()
     startIncident({ log: { analysis_id: 'log' }, heap: { analysis_id: 'new-heap' }, sourceSession: { session_id: 'src' } }, callbacks)
-    assert.deepEqual(bodies[1], { server_log_id: 'log', heap_id: 'new-heap', thread_id: null, gc_id: null, source_session: 'src' })
+    assert.deepEqual(bodies[1], { server_log_id: 'log', heap_id: 'new-heap', thread_id: null, gc_id: null, source_session: 'src', window_seconds: 300 })
     pending[1]({ ok: true, json: async () => ({ summary: 'current' }) }); await flush()
     pending[0]({ ok: true, json: async () => ({ summary: 'stale' }) }); await flush()
     assert.deepEqual(results, [{ summary: 'current' }])
@@ -201,4 +201,14 @@ test('automatic correlation includes attachments and ignores superseded response
     assert.deepEqual(errors, ['Source expired'])
     assert.equal(busy.at(-1), false)
   } finally { global.fetch = previous }
+})
+
+test('timezone is pre-filled from the browser and alignment warnings are visible', () => {
+  const { browserOffset, IncidentReport } = require('../src/components/ServerLogWorkspace.jsx')
+  assert.equal(browserOffset({ getTimezoneOffset: () => -330 }), '+05:30')
+  assert.equal(browserOffset({ getTimezoneOffset: () => 240 }), '-04:00')
+  assert.equal(browserOffset({ getTimezoneOffset: () => 0 }), '+00:00')
+  const note = 'Only 0 of 3 log events have timezone-aligned timestamps; the capture-time window was not applied.'
+  const html = renderToString(React.createElement(IncidentReport, { result: { summary: 's', status: 'completed', matches: [], limitations: [note, 'Context is not causation.'] } }))
+  assert.ok(html.includes('role="note"') && html.includes('timezone-aligned'))
 })

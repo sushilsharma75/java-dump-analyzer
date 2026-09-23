@@ -19,10 +19,11 @@ export async function analyzeGCLog(file) {
 }
 
 /** Synchronous heap upload — fine for files under 200MB. */
-export async function analyzeHeapDumpSync(file, quick = false, sourceSession = null) {
+export async function analyzeHeapDumpSync(file, quick = false, sourceSession = null, deep = false) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('quick', String(quick));
+  fd.append('deep', String(deep));
   if (sourceSession) fd.append('source_session', sourceSession);
   const res = await fetch(`${BASE}/api/analyze/heap`, { method: 'POST', body: fd });
   if (!res.ok) throw new Error(`Heap analysis failed: ${res.status} ${await res.text()}`);
@@ -30,11 +31,12 @@ export async function analyzeHeapDumpSync(file, quick = false, sourceSession = n
 }
 
 /** Submit a large heap dump for async parsing. Returns the initial JobStatus. */
-export async function analyzeHeapDumpAsync(file, quick = false, onUploadProgress = null, sourceSession = null) {
+export async function analyzeHeapDumpAsync(file, quick = false, onUploadProgress = null, sourceSession = null, deep = false) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('quick', String(quick));
+    fd.append('deep', String(deep));
     if (sourceSession) fd.append('source_session', sourceSession);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${BASE}/api/analyze/heap/async`);
@@ -57,11 +59,11 @@ export async function analyzeHeapDumpAsync(file, quick = false, onUploadProgress
 }
 
 /** Trigger parsing of a heap dump that already exists on the server. */
-export async function analyzeHeapDumpPath(path, quick = false, sourceSession = null) {
+export async function analyzeHeapDumpPath(path, quick = false, sourceSession = null, deep = false) {
   const res = await fetch(`${BASE}/api/analyze/heap/path`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, quick, source_session: sourceSession || null }),
+    body: JSON.stringify({ path, quick, deep, source_session: sourceSession || null }),
   });
   if (!res.ok) throw new Error(`Path analysis failed: ${res.status} ${await res.text()}`);
   return res.json();
@@ -213,11 +215,12 @@ export function uploadServerLog(file, timezoneOffset, onProgress, signal) {
   })
 }
 
-export async function analyzeIncident(serverLogId, heapId, threadId, gcId, sourceSession) {
+export async function analyzeIncident(serverLogId, heapId, threadId, gcId, sourceSession, windowSeconds = 300) {
   const response = await fetch(`${BASE}/api/analyze/incident`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ server_log_id: serverLogId, heap_id: heapId || null,
-      thread_id: threadId || null, gc_id: gcId || null, source_session: sourceSession || null }),
+      thread_id: threadId || null, gc_id: gcId || null, source_session: sourceSession || null,
+      window_seconds: windowSeconds }),
   })
   const data = await response.json()
   if (!response.ok) throw new Error(data.detail || `Combined analysis failed (${response.status})`)

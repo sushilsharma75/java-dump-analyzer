@@ -215,6 +215,7 @@ def parse_heap_dump(
     trace_graph: bool = True,
     index_path=None,
     stage_callback=None,
+    deep: bool = False,
 ) -> HeapDumpAnalysis:
     """
     Stream-parse an .hprof file.
@@ -226,6 +227,9 @@ def parse_heap_dump(
             Called periodically so a UI can show a progress bar.
         progress_interval_records: how often (in records) to fire the callback.
         stage_callback: optional callable(stage_name) for post-parse work.
+        deep: lift the file-size ceilings of the memory-bounded streaming stages
+            (retention tracing, duplicate-array scan) for this dump. Costs time,
+            not RAM; a limit of 0 (disabled by configuration) still wins.
     """
     stage = stage_callback or (lambda message: None)
     stage("Parsing heap records")
@@ -498,7 +502,7 @@ def parse_heap_dump(
     # let it break the primary analysis.
     graph_gate = _gate_reason("retention tracing (what holds the top consumer)",
                               enabled=trace_graph, truncated=truncated,
-                              file_size=file_size, limit=_graph_max_bytes(),
+                              file_size=file_size, limit=_deep_limit(_graph_max_bytes(), file_size, deep),
                               seekable=_seekable(fp),
                               env_hint="HEAP_GRAPH_MAX_BYTES")
     if graph_gate:
@@ -522,7 +526,7 @@ def parse_heap_dump(
     waste_gate = _gate_reason("duplicate-string / duplicate-buffer scan",
                               enabled=os.environ.get("HEAP_WASTE_TRACE", "1") != "0",
                               truncated=truncated, file_size=file_size,
-                              limit=_waste_max_bytes(), seekable=_seekable(fp),
+                              limit=_deep_limit(_waste_max_bytes(), file_size, deep), seekable=_seekable(fp),
                               env_hint="HEAP_WASTE_MAX_BYTES")
     if indexed and os.environ.get("HEAP_WASTE_TRACE", "1") != "0":
         try:
@@ -714,7 +718,9 @@ def _gate_reason(
             stage=stage,
             reason=f"dump is {_fmt_bytes(file_size)}, above this stage's "
                    f"{_fmt_bytes(limit)} ceiling",
-            enable_hint=f"raise {env_hint} to opt this dump in (costs time and RAM)",
+            enable_hint=(f"re-run with deep retention analysis enabled (costs time, not RAM), or raise {env_hint}"
+                         if env_hint in ("HEAP_GRAPH_MAX_BYTES", "HEAP_WASTE_MAX_BYTES")
+                         else f"raise {env_hint} to opt this dump in (costs time and RAM)"),
         )
     return None
 
@@ -813,6 +819,11 @@ def _heap_limit(name: str, default: int) -> int:
         return max(0, int(os.environ.get(name, str(default))))
     except ValueError:
         return default
+
+
+def _deep_limit(limit: int, file_size: int, deep: bool) -> int:
+    """A per-analysis opt-in raises a size ceiling to cover this dump."""
+    return max(limit, file_size or 0) if deep and limit > 0 else limit
 
 
 def _graph_max_bytes() -> int:

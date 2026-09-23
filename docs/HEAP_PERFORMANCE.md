@@ -45,6 +45,15 @@ reported as skipped. Object browsing and exact retained sizes are unavailable fo
 those reports; this change does not claim scalable exhaustive graph analysis of a
 38-million-object heap. No prefix-only quick mode is silently substituted.
 
+A **Deep retention analysis** checkbox on the heap upload (API `deep=true`) lifts
+the 2 GB ceilings of retention tracing and the duplicate-array scan for that
+analysis only. Both stream the dump with bounded memory, so the cost is extra
+passes over the file, not RAM. It gives a 2–10 GB dump the GC-root → field →
+source path for the top consumer without building the object index or dominator
+tree. `HEAP_GRAPH_TRACE=0` / `HEAP_WASTE_TRACE=0` still disable the stages. Its
+runtime on a real multi-GB dump with tens of millions of objects has not been
+measured.
+
 Jobs now expose the active stage. The UI labels ETA as parse ETA and suppresses
 it after parsing finishes, while showing the ongoing analysis stage.
 
