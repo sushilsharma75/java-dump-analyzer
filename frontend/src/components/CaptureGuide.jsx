@@ -20,7 +20,7 @@ export default function CaptureGuide() {
       </h2>
       <p className="text-bone-400 max-w-2xl text-sm md:text-base leading-relaxed mb-6">
         SSH in (PuTTY on Windows), find the Java process, and run the right command for your
-        JDK. Then drop the output into the matching zone above.
+        JDK. Upload the captured file using its matching Thread Dump, Heap Dump, or GC Log card above.
       </p>
 
       <div className="flex items-center gap-2 flex-wrap mb-8">
@@ -95,8 +95,8 @@ export default function CaptureGuide() {
       </div>
 
       <p className="text-bone-500 text-xs font-mono mt-8">
-        → then drag each file onto its zone above. Analyze a thread dump + heap dump (+ GC log)
-        together to unlock cross-dump correlation.
+        Attach matching source code and server.log above, if available, then analyze a thread or heap dump.
+        Attached logs and source are included automatically. Add the other dump or a GC log for more context.
       </p>
     </div>
   )
