@@ -433,7 +433,7 @@ MIT — see [LICENSE](LICENSE).
 ## Server logs and combined JVM investigations
 
 Upload **server.log** (plain UTF-8 text or JSON-lines, up to **5 GiB /
-5,368,709,120 bytes**) in **Server log · combined investigation**. The browser
+5,368,709,120 bytes**) using **Attach server log**, directly below source-code attachment. The browser
 streams the file as a raw body; the backend writes bounded chunks to temporary
 storage and scans it in a background job. Upload and scan progress are separate.
 Cancel stops an upload or cooperatively stops the indexer and removes partial
@@ -447,8 +447,10 @@ files. One server-log index runs at a time; other log jobs queue.
 4. Set process identity, capture time and build ID in the dump and log capture
    controls where known. Use timezone-bearing ISO timestamps. Explicit process or
    build conflicts block combined analysis. Missing identity remains unverified.
-5. Click **Analyze all attached evidence**. Inspect the selected artifact IDs;
-   detach inputs belonging to another incident. The report joins exact logged
+5. Analyze a thread or heap dump using its normal upload/path action. Source and
+   server-log preparation finish before dump actions become available. The combined
+   report runs automatically with the attached log and source, alongside the dump
+   report. The report joins exact logged
    classes/methods and thread names to dump evidence, including recorded retaining
    edges. Source-reference candidates are labelled separately from recorded edges.
 6. Search log events by severity, excerpt text, exact thread, request/trace ID,

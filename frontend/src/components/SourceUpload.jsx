@@ -1,9 +1,9 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { uploadSource, indexSourcePath, indexSourceGit, releaseSource } from '../api'
 
 const SESSION_STORAGE_KEY = 'postmortem.source_session'
 
-export default function SourceUpload({ session, onSession }) {
+export default function SourceUpload({ session, onSession, disabled = false, onBusyChange }) {
   const [drag, setDrag] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -14,9 +14,11 @@ export default function SourceUpload({ session, onSession }) {
   const [gitToken, setGitToken] = useState('')
   const [showToken, setShowToken] = useState(false)
   const inputRef = useRef(null)
+  useEffect(() => { onBusyChange?.(uploading) }, [uploading, onBusyChange])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
 
   const handleGit = async () => {
-    if (!gitUrl.trim()) return
+    if (disabled || uploading || !gitUrl.trim()) return
     setUploading(true)
     setError(null)
     try {
@@ -31,6 +33,7 @@ export default function SourceUpload({ session, onSession }) {
   }
 
   const handleFile = async (file) => {
+    if (disabled || uploading) return
     setUploading(true)
     setError(null)
     setUploadProgress(0)
@@ -48,7 +51,7 @@ export default function SourceUpload({ session, onSession }) {
   }
 
   const handlePath = async () => {
-    if (!pathInput.trim()) return
+    if (disabled || uploading || !pathInput.trim()) return
     setUploading(true)
     setError(null)
     try {
@@ -70,6 +73,7 @@ export default function SourceUpload({ session, onSession }) {
   }
 
   const handleDisconnect = async () => {
+    if (disabled || uploading) return
     if (session) {
       try { await releaseSource(session.session_id) } catch {}
       try { localStorage.removeItem(SESSION_STORAGE_KEY) } catch {}
@@ -80,6 +84,7 @@ export default function SourceUpload({ session, onSession }) {
   // Connected state
   if (session) {
     return (
+      <fieldset disabled={disabled || uploading} className="min-w-0">
       <div className="panel border-flag-ok/30 bg-flag-ok/[0.03] p-5 animate-fade-in">
         <div className="flex items-start gap-4">
           <div className="w-9 h-9 rounded-md bg-flag-ok/15 border border-flag-ok/30 flex items-center justify-center shrink-0">
@@ -109,11 +114,13 @@ export default function SourceUpload({ session, onSession }) {
           </button>
         </div>
       </div>
+      </fieldset>
     )
   }
 
   // Disconnected state
   return (
+    <fieldset disabled={disabled || uploading} className="min-w-0">
     <div className="panel p-5 md:p-6 animate-fade-in">
       <div className="flex items-start gap-4 mb-4">
         <div className="w-9 h-9 rounded-md border border-ink-600/60 bg-ink-800 flex items-center justify-center shrink-0">
@@ -262,6 +269,7 @@ export default function SourceUpload({ session, onSession }) {
         </div>
       )}
     </div>
+    </fieldset>
   )
 }
 

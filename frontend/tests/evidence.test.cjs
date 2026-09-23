@@ -120,9 +120,10 @@ const logEvent = { id: 1, evidence_id: 'E-log1', level: 'ERROR', start_line: 4, 
   frames: [{ class_name: 'example.Cache', method: 'put', file: 'Cache.java', line: 4,
     source: { repo_path: 'Cache.java', line: 4, role: 'logged_frame', snippet: { start_line: 4, lines: ['cache.put(value);'] } } }] }
 
-test('server log workspace exposes 5 GiB upload, selected artifacts and combined action', () => {
-  const html = renderToString(React.createElement(ServerLogWorkspace, { onLog() {}, heap: analysis }))
-  for (const text of ['5 GiB', 'Upload server.log', 'Analyze all attached evidence', 'Timezone', analysis.analysis_id]) assert.ok(html.includes(text), text)
+test('server log attachment uses the normal dump analysis workflow', () => {
+  const html = renderToString(React.createElement(ServerLogWorkspace, { onLog() {} }))
+  assert.ok(!html.includes('Analyze all attached evidence'))
+  for (const text of ['5 GiB', 'Upload server.log', 'included automatically', 'Timezone']) assert.ok(html.includes(text), text)
 })
 test('log events and incident exports preserve evidence and escape log text', () => {
   const result = { summary: 'One event', status: 'completed', matches: [{ event: logEvent, links: [{ kind: 'same_class_and_method' }], aligned_with: ['thread'], confidence: 'medium' }], limitations: ['Context is not causation.'] }
@@ -154,4 +155,50 @@ test('log client uploads the raw file and supports cancellation', async () => {
     controller.abort()
     await assert.rejects(promise, /cancelled/)
   } finally { global.XMLHttpRequest = previous }
+})
+
+const Hero = require('../src/components/Hero.jsx').default
+const SourceUpload = require('../src/components/SourceUpload.jsx').default
+const { startIncident } = require('../src/components/AutomaticIncident.jsx')
+
+test('log attachment sits between source attachment and dump upload cards', () => {
+  const html = renderToString(React.createElement(Hero, {
+    serverLogAttachment: React.createElement(ServerLogWorkspace, { onLog() {} }),
+  }))
+  assert.ok(html.indexOf('Attach source code') < html.indexOf('Attach server log'))
+  assert.ok(html.indexOf('Attach server log') < html.indexOf('Thread Dump'))
+  assert.ok(!html.includes('Analyze all attached evidence'))
+})
+
+test('attachment controls respect shared workflow busy state', () => {
+  const source = renderToString(React.createElement(SourceUpload, { disabled: true }))
+  const log = renderToString(React.createElement(ServerLogWorkspace, { disabled: true, onLog() {} }))
+  assert.match(source, /<fieldset disabled=""/)
+  assert.match(log, /<button[^>]*disabled=""[^>]*>Upload server.log/)
+})
+
+test('automatic correlation includes attachments and ignores superseded responses', async () => {
+  const previous = global.fetch
+  const pending = [], bodies = [], results = [], busy = [], errors = []
+  global.fetch = (url, options) => new Promise(resolve => {
+    assert.equal(url, '/api/analyze/incident')
+    bodies.push(JSON.parse(options.body)); pending.push(resolve)
+  })
+  const callbacks = { onResult: v => results.push(v), onError: e => errors.push(e), onBusy: b => busy.push(b) }
+  const flush = () => new Promise(resolve => setImmediate(resolve))
+  try {
+    const cancel = startIncident({ log: { analysis_id: 'log' }, thread: { analysis_id: 'old-thread' }, sourceSession: { session_id: 'src' } }, callbacks)
+    cancel()
+    startIncident({ log: { analysis_id: 'log' }, heap: { analysis_id: 'new-heap' }, sourceSession: { session_id: 'src' } }, callbacks)
+    assert.deepEqual(bodies[1], { server_log_id: 'log', heap_id: 'new-heap', thread_id: null, gc_id: null, source_session: 'src' })
+    pending[1]({ ok: true, json: async () => ({ summary: 'current' }) }); await flush()
+    pending[0]({ ok: true, json: async () => ({ summary: 'stale' }) }); await flush()
+    assert.deepEqual(results, [{ summary: 'current' }])
+    assert.deepEqual(errors, [])
+    assert.equal(busy.at(-1), false)
+    startIncident({ log: { analysis_id: 'log' }, thread: { analysis_id: 'new-thread' } }, callbacks)
+    pending[2]({ ok: false, json: async () => ({ detail: 'Source expired' }) }); await flush()
+    assert.deepEqual(errors, ['Source expired'])
+    assert.equal(busy.at(-1), false)
+  } finally { global.fetch = previous }
 })

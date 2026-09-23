@@ -1,3 +1,4 @@
+import AutomaticIncident from './components/AutomaticIncident'
 import ServerLogWorkspace, { IncidentReport } from './components/ServerLogWorkspace'
 import DatabaseAnalysis from './components/DatabaseAnalysis'
 import AnalysisHistory from './components/AnalysisHistory'
@@ -39,6 +40,9 @@ export default function App() {
   const [heapAnalysis, setHeapAnalysis] = useState(null)
   const [gcAnalysis, setGcAnalysis] = useState(null)
   const [serverLog, setServerLog] = useState(null)
+  const [sourceBusy, setSourceBusy] = useState(false)
+  const [logBusy, setLogBusy] = useState(false)
+  const [incidentBusy, setIncidentBusy] = useState(false)
 
   // Pinned baselines for delta comparison ({ analysis, name } or null).
   const [heapBaseline, setHeapBaseline] = useState(null)
@@ -234,20 +238,23 @@ export default function App() {
     if (view === 'gc') setGcAnalysis(updated)
   }
 
+  const preparationBusy = loading || sourceBusy || logBusy || ['uploading', 'parsing'].includes(heapPhase)
+  const workflowBusy = preparationBusy || incidentBusy
+
   return (
     <ReportProvider>
     <div className="min-h-screen">
       <Header onReset={reset} hasAnalysis={view !== 'landing'} section={section}
-        loading={loading} onNavigate={next => { reset(); setSection(next) }} />
+        loading={loading || sourceBusy || logBusy || incidentBusy} onNavigate={next => { reset(); setSection(next) }} />
 
       <main className="px-4 md:px-8 pb-24">
-        {view === 'landing' && <AnalysisHistory section={section} onOpen={({ kind, analysis: saved }) => {
+        {view === 'landing' && <AnalysisHistory disabled={workflowBusy} section={section} onOpen={({ kind, analysis: saved }) => {
           setAnalysis(saved); setView(kind); setFilename(saved.analysis_id)
           setSection(kind === 'database' ? 'database' : 'jvm')
           if (kind === 'thread') setThreadAnalysis(saved)
           if (kind === 'heap') setHeapAnalysis(saved)
           if (kind === 'gc') setGcAnalysis(saved)
-          if (kind === 'server_log') setServerLog(saved)
+          if (kind === 'server_log') { setServerLog(saved); setView('landing'); setAnalysis(null) }
         }} />}
         {view === 'landing' && section === 'jvm' && (threadAnalysis || heapAnalysis) && !(threadAnalysis && heapAnalysis) && (
           <div className="max-w-3xl mx-auto pt-8">
@@ -271,13 +278,16 @@ export default function App() {
             onDatabaseUpload={handleDatabaseUpload}
             sourceSession={sourceSession}
             onSourceSession={setSourceSession}
-            loading={loading}
+            onSourceBusyChange={setSourceBusy}
+            serverLogAttachment={<ServerLogWorkspace log={serverLog} onLog={setServerLog}
+              sourceSession={sourceSession} disabled={loading || sourceBusy || incidentBusy} onBusyChange={setLogBusy} />}
+            loading={workflowBusy}
             error={error}
           />
         )}
-        {section === 'jvm' && <ServerLogWorkspace log={serverLog} onLog={setServerLog}
-          heap={heapAnalysis} thread={threadAnalysis} gc={gcAnalysis} sourceSession={sourceSession}
-          onDetach={kind => ({ heap: setHeapAnalysis, thread: setThreadAnalysis, gc: setGcAnalysis }[kind])(null)} />}
+        <AutomaticIncident enabled={section === 'jvm' && ['thread', 'heap', 'gc'].includes(view)}
+          pending={preparationBusy} log={serverLog} heap={heapAnalysis} thread={threadAnalysis}
+          gc={gcAnalysis} sourceSession={sourceSession} onBusyChange={setIncidentBusy} />
         {view === 'incident' && analysis && <div className="max-w-7xl mx-auto mt-6"><IncidentReport result={analysis} sourceSession={sourceSession} /></div>}
         {view === 'database' && analysis && <DatabaseAnalysis key={analysis.analysis_id} analysis={analysis} threadAnalysis={threadAnalysis} />}
         {view === 'heap_progress' && (
@@ -290,7 +300,7 @@ export default function App() {
         )}
         {view === 'thread' && analysis && (
           <>
-            {heapAnalysis && threadAnalysis && (
+            {!serverLog && heapAnalysis && threadAnalysis && (
               <div className="max-w-7xl mx-auto pt-8">
                 <CorrelationPanel heap={heapAnalysis} thread={threadAnalysis} gc={gcAnalysis} sourceSession={sourceSession} />
               </div>
@@ -318,7 +328,7 @@ export default function App() {
         )}
         {view === 'heap' && analysis && (
           <>
-            {heapAnalysis && threadAnalysis && (
+            {!serverLog && heapAnalysis && threadAnalysis && (
               <div className="max-w-7xl mx-auto pt-8">
                 <CorrelationPanel heap={heapAnalysis} thread={threadAnalysis} gc={gcAnalysis} sourceSession={sourceSession} />
               </div>
@@ -341,7 +351,7 @@ export default function App() {
         )}
         {view === 'gc' && analysis && (
           <>
-            {heapAnalysis && threadAnalysis && (
+            {!serverLog && heapAnalysis && threadAnalysis && (
               <div className="max-w-7xl mx-auto pt-8">
                 <CorrelationPanel heap={heapAnalysis} thread={threadAnalysis} gc={gcAnalysis} sourceSession={sourceSession} />
               </div>

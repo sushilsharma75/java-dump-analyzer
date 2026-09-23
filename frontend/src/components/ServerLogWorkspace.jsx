@@ -5,7 +5,7 @@ import SourceSnippet from './SourceSnippet'
 import RetentionTrace from './RetentionTrace'
 import LLMPanel from './LLMPanel'
 import { fmtBytes } from '../report'
-import { uploadServerLog, getJob, deleteJob, analyzeIncident } from '../api'
+import { uploadServerLog, getJob, deleteJob } from '../api'
 
 async function get(path) {
   const response = await fetch(path)
@@ -129,20 +129,19 @@ function LogBrowser({ analysis, sourceSession }) {
   </details>
 }
 
-export default function ServerLogWorkspace({ log, onLog, heap, thread, gc, sourceSession, onDetach }) {
+export default function ServerLogWorkspace({ log, onLog, sourceSession, disabled = false, onBusyChange }) {
   const [busy, setBusy] = useState(false)
   const [phase, setPhase] = useState('')
   const [progress, setProgress] = useState(null)
   const [offset, setOffset] = useState('')
   const [error, setError] = useState(null)
-  const [result, setResult] = useState(null)
-  const [combining, setCombining] = useState(false)
   const controller = useRef(null)
   const job = useRef(null)
   const timer = useRef(null)
   const generation = useRef(0)
-  const incidentGeneration = useRef(0)
-  useEffect(() => { incidentGeneration.current++; setResult(null); setCombining(false) }, [log, heap, thread, gc, sourceSession?.session_id])
+  const input = useRef(null)
+  useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   useEffect(() => () => {
     generation.current++; controller.current?.abort(); clearTimeout(timer.current)
     if (job.current) deleteJob(job.current).catch(() => {})
@@ -153,11 +152,11 @@ export default function ServerLogWorkspace({ log, onLog, heap, thread, gc, sourc
     job.current = null; setBusy(false); setPhase('Cancelled')
   }
   const upload = async file => {
-    if (!file) return
+    if (!file || disabled || busy) return
     if (file.size > 5 * 1024 ** 3) { setError('Server log exceeds the 5 GiB limit'); return }
     if (!file.size) { setError('Server log is empty'); return }
     const token = ++generation.current
-    setBusy(true); setError(null); setResult(null); setPhase('Uploading server log')
+    setBusy(true); setError(null); setPhase('Uploading server log')
     setProgress({ loaded: 0, total: file.size }); controller.current = new AbortController()
     try {
       const initial = await uploadServerLog(file, offset || null, p => { if (token === generation.current) setProgress(p) }, controller.current.signal)
@@ -179,26 +178,15 @@ export default function ServerLogWorkspace({ log, onLog, heap, thread, gc, sourc
       timer.current = setTimeout(poll, 100)
     } catch (e) { if (token === generation.current) { setError(e.message); setBusy(false) } }
   }
-  const combine = async () => {
-    const token = ++incidentGeneration.current
-    setCombining(true); setError(null)
-    try {
-      const combined = await analyzeIncident(log.analysis_id, heap?.analysis_id, thread?.analysis_id, gc?.analysis_id, sourceSession?.session_id)
-      if (token === incidentGeneration.current) setResult(combined)
-    }
-    catch (e) { if (token === incidentGeneration.current) setError(e.message) }
-    finally { if (token === incidentGeneration.current) setCombining(false) }
-  }
-  return <div className="max-w-7xl mx-auto mt-6 space-y-5">
+  return <div className="space-y-5">
     <section className="panel p-5 space-y-4">
-      <h2 className="font-display text-xl">Server log · combined investigation</h2>
-      <p className="text-sm text-bone-400">Upload server.log up to 5 GiB. Analyze it with the selected heap/thread dumps and source. The full file is scanned; long event excerpts and frame lists have visible limits.</p>
+      <h2 className="font-display text-xl">Attach server log — optional</h2>
+      <p className="text-sm text-bone-400">Upload server.log up to 5 GiB. It will be included automatically when you analyze a thread or heap dump, alongside the attached source code.</p>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="btn-secondary">{busy ? 'Processing log…' : 'Upload server.log'}
-          <input className="block text-sm" type="file" accept=".log,.txt,.json,.jsonl,text/plain,application/octet-stream" disabled={busy} onChange={e => { upload(e.target.files?.[0]); e.target.value = '' }} />
-        </label>
+        <input ref={input} className="hidden" type="file" aria-label="Server log file" accept=".log,.txt,.json,.jsonl,text/plain,application/octet-stream" disabled={busy || disabled} onChange={e => { upload(e.target.files?.[0]); e.target.value = '' }} />
+        <button type="button" className="btn-secondary" disabled={busy || disabled} onClick={() => input.current?.click()}>{busy ? 'Processing log…' : log ? 'Replace server.log' : 'Upload server.log'}</button>
         <label className="text-sm">Timezone for timestamps without an offset
-          <input className="block bg-ink-950 border rounded p-2" placeholder="Unknown, or +05:30" value={offset} disabled={busy} onChange={e => setOffset(e.target.value)} />
+          <input className="block bg-ink-950 border rounded p-2" placeholder="Unknown, or +05:30" value={offset} disabled={busy || disabled} onChange={e => setOffset(e.target.value)} />
         </label>
         {busy && <button className="btn-secondary" onClick={cancel}>Cancel log upload / scan</button>}
       </div>
@@ -206,19 +194,14 @@ export default function ServerLogWorkspace({ log, onLog, heap, thread, gc, sourc
       {error && <p role="alert" className="text-flag-critical">{error}</p>}
       <div className="text-sm space-y-1">
         <p>Server log: {log ? `${log.filename || 'Saved log'} · ${log.analysis_id}` : 'not attached'}</p>
-        <p>Heap: {heap?.analysis_id || 'not attached'} · Thread: {thread?.analysis_id || 'not attached'}</p>
-        <p>Source: {sourceSession?.root_dir || 'not attached'} · GC: {gc?.analysis_id || 'not attached'}</p>
-        {onDetach && <div className="flex gap-2">{[['heap', heap], ['thread', thread], ['gc', gc]].filter(([, value]) => value).map(([kind]) => <button className="btn-secondary" key={kind} onClick={() => onDetach(kind)}>Detach {kind}</button>)}</div>}
       </div>
-      <button className="btn-primary" disabled={!log || !(heap || thread) || combining || busy} onClick={combine}>{combining ? 'Combining evidence…' : 'Analyze all attached evidence'}</button>
       {log && <>
         <p>{log.summary}</p>
-        <div className="flex gap-3"><a className="btn-secondary" href={`/api/analyses/${log.analysis_id}`} download>Download log analysis JSON</a><button className="btn-secondary" onClick={() => onLog(null)}>Detach log</button></div>
+        <div className="flex gap-3"><a className="btn-secondary" href={`/api/analyses/${log.analysis_id}`} download>Download log analysis JSON</a><button className="btn-secondary" disabled={busy || disabled} onClick={() => onLog(null)}>Detach log</button></div>
         <details><summary>Log scan coverage, exceptions and limits</summary><pre className="text-xs overflow-x-auto whitespace-pre-wrap">{JSON.stringify({ counts: log.counts, levels: log.levels, exceptions: log.exceptions, time_range: log.time_range, coverage: log.parse_coverage, limitations: log.limitations }, null, 2)}</pre></details>
         <LogBrowser key={log.analysis_id} analysis={log} sourceSession={sourceSession} />
-        <details><summary>Log capture identity</summary><Investigation analysis={log} sourceSession={sourceSession} onUpdate={onLog} /></details>
+        <details><summary>Log capture identity</summary><fieldset disabled={busy || disabled}><Investigation analysis={log} sourceSession={sourceSession} onUpdate={onLog} /></fieldset></details>
       </>}
     </section>
-    {result && <IncidentReport result={result} sourceSession={sourceSession} />}
   </div>
 }

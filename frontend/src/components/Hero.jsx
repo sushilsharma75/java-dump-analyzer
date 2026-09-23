@@ -26,7 +26,7 @@ const TONES = {
 export default function Hero({
   section = 'jvm',
   onThreadUpload, onHeapUpload, onHeapPath, onGCUpload, onDatabaseUpload,
-  sourceSession, onSourceSession,
+  sourceSession, onSourceSession, onSourceBusyChange, serverLogAttachment,
   loading, error,
 }) {
   return (
@@ -49,8 +49,10 @@ export default function Hero({
       {section === 'jvm' && <>
       {/* Source attachment (optional, shown above the dump upload) */}
       <div className="mb-8 animate-slide-up">
-        <SourceUpload session={sourceSession} onSession={onSourceSession} />
+        <SourceUpload session={sourceSession} onSession={onSourceSession} disabled={loading} onBusyChange={onSourceBusyChange} />
       </div>
+
+      {serverLogAttachment && <div className="mb-8 animate-slide-up">{serverLogAttachment}</div>}
 
       {/* Upload grid */}
       <div className="grid md:grid-cols-3 gap-6 mb-12 animate-slide-up">
