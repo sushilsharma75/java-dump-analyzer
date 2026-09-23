@@ -175,6 +175,7 @@ async def analyze_heap_sync(
     file: UploadFile = File(...),
     quick: bool = Form(False),
     source_session: Optional[str] = Form(None),
+    deep: bool = Form(False),
 ):
     """Synchronous heap analysis for smaller dumps (< 200 MB).
 
@@ -204,7 +205,7 @@ async def analyze_heap_sync(
         source = _resolve_source(source_session)
         def run():
             with open(tmp.name, "rb") as fp:
-                return parse_heap_dump(fp, max_bytes=256*1024*1024 if quick else None,
+                return parse_heap_dump(fp, max_bytes=256*1024*1024 if quick else None, deep=deep,
                                        source=source, index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
         result = await asyncio.to_thread(run)
         result.analysis_id = identifier
@@ -231,6 +232,7 @@ async def analyze_heap_async(
     file: UploadFile = File(...),
     quick: bool = Form(False),
     source_session: Optional[str] = Form(None),
+    deep: bool = Form(False),
 ):
     """
     Upload a heap dump in chunks and parse it asynchronously. Returns a JobStatus
@@ -264,7 +266,7 @@ async def analyze_heap_async(
              file.filename, total, job_id)
     JOBS._jobs[job_id]["bytes_total"] = total
     JOBS.mark_running(job_id, tempfile=str(tmp_path))
-    asyncio.create_task(_run_heap_parse(job_id, tmp_path, quick, source_session=source_session))
+    asyncio.create_task(_run_heap_parse(job_id, tmp_path, quick, source_session=source_session, deep=deep))
     return JobStatus(**JOBS.get(job_id))
 
 
@@ -272,6 +274,7 @@ class HeapPathRequest(BaseModel):
     path: str
     quick: bool = False
     source_session: Optional[str] = None
+    deep: bool = False
 
 
 @app.post("/api/analyze/heap/path", response_model=JobStatus)
@@ -294,7 +297,7 @@ async def analyze_heap_path(req: HeapPathRequest):
     JOBS.mark_running(job_id, tempfile=None)
     log.info("Parsing server-side heap path: %s (%d bytes, job=%s)",
              src, src.stat().st_size, job_id)
-    asyncio.create_task(_run_heap_parse(job_id, src, req.quick, delete_after=False, source_session=req.source_session))
+    asyncio.create_task(_run_heap_parse(job_id, src, req.quick, delete_after=False, source_session=req.source_session, deep=req.deep))
     return JobStatus(**JOBS.get(job_id))
 
 
@@ -304,6 +307,7 @@ async def _run_heap_parse(
     quick: bool,
     delete_after: bool = True,
     source_session: Optional[str] = None,
+    deep: bool = False,
 ) -> None:
     """Background task: parse the file, report progress, store result."""
     try:
@@ -313,7 +317,7 @@ async def _run_heap_parse(
         def _do_parse():
             with open(path, "rb") as fp:
                 max_bytes = 256 * 1024 * 1024 if quick else None
-                return parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index,
+                return parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index, deep=deep,
                                        stage_callback=JOBS.stage_callback(job_id),
                                        index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
         result = await asyncio.to_thread(_do_parse)

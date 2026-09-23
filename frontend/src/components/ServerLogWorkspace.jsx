@@ -53,6 +53,8 @@ export function IncidentReport({ result, sourceSession }) {
   return <section className="panel p-5 space-y-4">
     <h3 className="font-display text-lg">Combined JVM investigation</h3>
     <p>{result.summary}</p>
+    {(result.limitations || []).filter(note => /timezone-aligned|capture-time window|showing matches from the whole log/.test(note)).map(note =>
+      <p key={note} role="note" className="text-sm text-flag-warning">{note}</p>)}
     <div className="flex flex-wrap gap-3">
       {result.analysis_id && <a className="btn-secondary" href={`/api/analyses/${result.analysis_id}`} download>Download combined JSON</a>}
       <button className="btn-secondary" onClick={() => exportHTML(result)}>Export combined HTML</button>
@@ -129,11 +131,18 @@ function LogBrowser({ analysis, sourceSession }) {
   </details>
 }
 
+/** ±HH:MM for this browser, a best guess for logs written without an offset. */
+export function browserOffset(date = new Date()) {
+  const minutes = -date.getTimezoneOffset()
+  const abs = Math.abs(minutes)
+  return `${minutes < 0 ? '-' : '+'}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+}
+
 export default function ServerLogWorkspace({ log, onLog, sourceSession, disabled = false, onBusyChange }) {
   const [busy, setBusy] = useState(false)
   const [phase, setPhase] = useState('')
   const [progress, setProgress] = useState(null)
-  const [offset, setOffset] = useState('')
+  const [offset, setOffset] = useState(browserOffset)
   const [error, setError] = useState(null)
   const controller = useRef(null)
   const job = useRef(null)
@@ -185,7 +194,7 @@ export default function ServerLogWorkspace({ log, onLog, sourceSession, disabled
       <div className="flex flex-wrap items-center gap-3">
         <input ref={input} className="hidden" type="file" aria-label="Server log file" accept=".log,.txt,.json,.jsonl,text/plain,application/octet-stream" disabled={busy || disabled} onChange={e => { upload(e.target.files?.[0]); e.target.value = '' }} />
         <button type="button" className="btn-secondary" disabled={busy || disabled} onClick={() => input.current?.click()}>{busy ? 'Processing log…' : log ? 'Replace server.log' : 'Upload server.log'}</button>
-        <label className="text-sm">Timezone for timestamps without an offset
+        <label className="text-sm">Timezone of the server for timestamps without an offset (pre-filled from this browser; clear if unknown)
           <input className="block bg-ink-950 border rounded p-2" placeholder="Unknown, or +05:30" value={offset} disabled={busy || disabled} onChange={e => setOffset(e.target.value)} />
         </label>
         {busy && <button className="btn-secondary" onClick={cancel}>Cancel log upload / scan</button>}

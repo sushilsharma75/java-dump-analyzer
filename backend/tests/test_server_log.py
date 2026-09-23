@@ -114,7 +114,36 @@ def test_incident_matches_recorded_frames_to_dump_and_source(indexed, tmp_path):
     assert analyze_incident(report, path, thread=thread)['status'] == 'incompatible'
 
 
-def test_out_of_window_events_not_correlated(indexed):
+def test_out_of_window_events_are_labelled_unaligned(indexed):
     report, path = indexed
     thread = {'capture': {'captured_at': '2026-09-23T12:00:00Z'}, 'threads': [{'name': 'worker-1', 'stack': []}]}
-    assert analyze_incident(report, path, thread=thread)['matches'] == []
+    combined = analyze_incident(report, path, thread=thread)
+    assert combined['coverage']['time_filter_fallback']
+    assert not combined['coverage']['time_filter_applied']
+    assert combined['matches'], 'whole-log matches are shown instead of an empty report'
+    assert all(m['aligned_with'] == [] and m['confidence'] == 'low' for m in combined['matches'])
+    assert any('±300 s' in note for note in combined['limitations'])
+
+
+def test_log_without_timezone_offset_still_correlates(tmp_path):
+    """Default Logback/Log4j timestamps carry no offset; they must not be filtered out."""
+    raw = LOG.replace(b'.000+00:00', b'.000')
+    report = server_log.build_log_index(io.BytesIO(raw), tmp_path / 'log.sqlite')
+    report['analysis_id'] = 'a' * 32
+    assert report['time_range']['aligned_events'] == 0
+    heap = {'analysis_id': 'c' * 32, 'capture': {'captured_at': '2026-09-22T12:00:02Z'},
+            'top_classes_by_size': [{'class_name': 'com.example.Cache', 'instance_count': 10}]}
+    combined = analyze_incident(report, tmp_path / 'log.sqlite', heap=heap)
+    assert combined['coverage']['matching_events'] == 2
+    assert not combined['coverage']['time_filter_applied']
+    assert any('timezone-aligned' in note for note in combined['limitations'])
+    assert all(m['confidence'] == 'low' for m in combined['matches'])
+
+
+def test_jdk_histogram_classes_do_not_match_log_frames(tmp_path):
+    raw = b'2026-09-22 12:00:01.000+00:00 ERROR [w] com.example.Svc - failed\n\tat java.lang.String.format(String.java:1)\n'
+    report = server_log.build_log_index(io.BytesIO(raw), tmp_path / 'log.sqlite')
+    report['analysis_id'] = 'a' * 32
+    heap = {'analysis_id': 'c' * 32, 'capture': {'captured_at': '2026-09-22T12:00:02Z'},
+            'top_classes_by_size': [{'class_name': 'java.lang.String', 'instance_count': 10**6}, {'class_name': 'byte[]'}]}
+    assert analyze_incident(report, tmp_path / 'log.sqlite', heap=heap)['coverage']['matching_events'] == 0

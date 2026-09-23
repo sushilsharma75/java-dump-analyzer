@@ -31,11 +31,14 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
         return {'summary': 'Combined analysis blocked by incompatible captures.', 'status': 'incompatible',
                 'findings': [], 'matches': [], 'limitations': conflicts + warnings, 'inputs': _inputs(log, bundles)}
 
+    from .source import is_user_code
     classes, thread_names, heap_evidence = set(), set(), {}
     if heap:
         for entry in (heap.get('top_classes_by_size', []) + heap.get('top_classes_by_count', []))[:100]:
             cls = entry.get('class_name')
-            if cls:
+            # JDK/framework histogram classes (String, byte[], HashMap$Node) appear
+            # in unrelated log frames everywhere; only application classes discriminate.
+            if cls and is_user_code(cls):
                 classes.add(cls)
                 heap_evidence.setdefault(cls, []).append({'kind': 'histogram', 'class_name': cls,
                     'instances': entry.get('instance_count'), 'shallow_bytes': entry.get('shallow_size_bytes')})
@@ -73,10 +76,17 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
         for cls, path in source._fqcn_to_path.items():
             if source.relative_path(path) in source_candidates:
                 classes.add(cls)
-    from .source import is_user_code
     selected_classes = sorted(classes, key=lambda c: (not is_user_code(c), c))[:500]
     selected_threads = sorted(thread_names)[:200]
     windows = []
+    log_events = (log.get('counts') or {}).get('events') or 0
+    aligned_events = (log.get('time_range') or {}).get('aligned_events') or 0
+    # Timestamps without an offset are stored unaligned (NULL); a time filter
+    # would silently discard them, so it needs most of the log to be aligned.
+    log_aligned = bool(log_events) and aligned_events * 2 >= log_events
+    if not log_aligned:
+        warnings.append(f'Only {aligned_events:,} of {log_events:,} log events have timezone-aligned timestamps; '
+                        'the capture-time window was not applied. Re-upload the log with its timezone offset to enable it.')
     for kind, dump in bundles.items():
         at = server_log.parse_time((dump.get('capture') or {}).get('captured_at'))
         if at:
@@ -97,11 +107,20 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
                  UNION SELECT e.id FROM events e JOIN wanted_threads w ON w.name=e.thread'''
         where, args = '', []
         # Only claim aligned evidence when every attached dump has an aligned capture.
-        if windows and len(windows) == len(bundles):
+        if log_aligned and windows and len(windows) == len(bundles):
             where = ' AND (' + ' OR '.join('e.timestamp BETWEEN ? AND ?' for _ in windows) + ')'
             args = [value for _, lo, hi in windows for value in (lo, hi)]
-        base = ' FROM events e JOIN (' + ids + ') hits ON hits.id=e.id WHERE 1=1' + where
-        total = db.execute('SELECT count(*)' + base, args).fetchone()[0]
+        base = ' FROM events e JOIN (' + ids + ') hits ON hits.id=e.id WHERE 1=1'
+        total = db.execute('SELECT count(*)' + base + where, args).fetchone()[0]
+        window_fallback = False
+        if where and not total:
+            # Leaks build up long before a capture; nothing in the window is not
+            # evidence that nothing matched. Show whole-log matches, labelled low confidence.
+            window_fallback = True
+            warnings.append(f'No matching events within ±{window_seconds:,} s of the capture; showing matches from the whole log.')
+            where, args = '', []
+            total = db.execute('SELECT count(*)' + base, args).fetchone()[0]
+        base += where
         rows = db.execute('SELECT e.*' + base + " ORDER BY CASE e.level WHEN 'FATAL' THEN 0 WHEN 'ERROR' THEN 1 WHEN 'WARN' THEN 2 ELSE 3 END,e.id LIMIT 100", args).fetchall()
         matches = []
         build = capture.get('build_id')
@@ -143,6 +162,7 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
                              'candidate_classes': len(classes), 'searched_classes': len(selected_classes),
                              'candidate_threads': len(thread_names), 'searched_threads': len(selected_threads),
                              'window_seconds': window_seconds, 'time_filter_applied': bool(where),
+                             'time_filter_fallback': window_fallback, 'log_aligned_events': aligned_events,
                              'selection': 'error/warning priority, then file order; exact class, method and thread-name matches'},
                 'limitations': list(dict.fromkeys(warnings)) + [
                     'Matches identify shared context, not causation or the historical allocation stack.',

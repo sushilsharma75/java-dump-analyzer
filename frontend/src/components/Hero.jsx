@@ -73,7 +73,8 @@ export default function Hero({
           subtitle="jmap -dump · jcmd GC.heap_dump"
           formats=".hprof"
           accept=".hprof,application/octet-stream"
-          onFile={(f) => onHeapUpload(f, false)}
+          onFile={(f, deep) => onHeapUpload(f, false, deep)}
+          deepOption
           quickOption
           onQuickFile={(f) => onHeapUpload(f, true)}
           loading={loading}
@@ -134,9 +135,10 @@ export default function Hero({
 function UploadCard({
   tag, title, subtitle, formats, accept, onFile,
   quickOption, onQuickFile, loading, tone, description,
-  serverPath, onServerPath,
+  serverPath, onServerPath, deepOption,
 }) {
   const [showPath, setShowPath] = useState(false)
+  const [deep, setDeep] = useState(false)
   const [pathInput, setPathInput] = useState('')
 
   const tc = TONES[tone] || TONES.info
@@ -164,7 +166,8 @@ function UploadCard({
 
       {!showPath ? (
         <div className="text-center">
-          <FileUpload label={title} accept={accept} formats={formats} onFile={onFile} loading={loading} />
+          <FileUpload label={title} accept={accept} formats={formats} onFile={f => onFile(f, deep)} loading={loading} />
+          {deepOption && <DeepToggle deep={deep} onChange={setDeep} disabled={loading} />}
 
           {quickOption && (
             <div className="mt-3 text-[10px] font-mono text-bone-500 uppercase tracking-wider">
@@ -218,9 +221,10 @@ function UploadCard({
           <p className="font-mono text-[10px] text-bone-500 mb-3">
             skips upload — best for multi-GB dumps already on the server
           </p>
+          {deepOption && <div className="mb-3"><DeepToggle deep={deep} onChange={setDeep} disabled={loading} /></div>}
           <div className="flex gap-2">
             <button
-              onClick={() => onServerPath(pathInput.trim(), false)}
+              onClick={() => onServerPath(pathInput.trim(), false, deep)}
               disabled={loading || !pathInput.trim()}
               className="btn-primary"
             >
@@ -237,6 +241,16 @@ function UploadCard({
         </div>
       )}
     </div>
+  )
+}
+
+/** Retention tracing and the duplicate scan stream the dump with bounded RAM; above 2 GB they only cost time. */
+function DeepToggle({ deep, onChange, disabled }) {
+  return (
+    <label className="mt-3 flex items-start justify-center gap-2 text-[11px] text-bone-400 text-left">
+      <input type="checkbox" className="mt-0.5" checked={deep} disabled={disabled} onChange={e => onChange(e.target.checked)} />
+      <span>Deep retention analysis for dumps over 2 GB — traces what holds the top consumer back to source. Adds extra passes over the file.</span>
+    </label>
   )
 }
 
