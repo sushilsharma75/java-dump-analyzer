@@ -1,4 +1,5 @@
 import Investigation from './Investigation'
+import RetentionTrace from './RetentionTrace'
 import { useState } from 'react'
 import Findings from './Findings'
 import LLMPanel from './LLMPanel'
@@ -410,6 +411,9 @@ function Dominators({ analysis }) {
               <span className="font-mono text-xs text-bone-500 text-right tabular-nums w-24 relative z-10">
                 {fmtBytes(e.shallow_bytes)}
               </span>
+              {e.root_paths && <details className="col-span-4 relative z-10 mt-3"><summary>Reference chain and source trace</summary>
+                <RetentionTrace data={e.root_paths} />
+              </details>}
             </div>
           )
         })}

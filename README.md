@@ -429,3 +429,84 @@ artifacts that do not contain the necessary evidence.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Server logs and combined JVM investigations
+
+Upload **server.log** (plain UTF-8 text or JSON-lines, up to **5 GiB /
+5,368,709,120 bytes**) in **Server log · combined investigation**. The browser
+streams the file as a raw body; the backend writes bounded chunks to temporary
+storage and scans it in a background job. Upload and scan progress are separate.
+Cancel stops an upload or cooperatively stops the indexer and removes partial
+files. One server-log index runs at a time; other log jobs queue.
+
+1. Attach the matching source tree using the existing Source attachment panel.
+2. Upload or reopen the incident's heap and/or thread dump. GC logs are optional.
+3. Upload the server log. For timestamps without an offset, supply its UTC offset
+   (for example `+05:30`); leave it blank if unknown. An offset is fixed for this
+   file; split logs spanning a daylight-saving change or use offset-bearing logs.
+4. Set process identity, capture time and build ID in the dump and log capture
+   controls where known. Use timezone-bearing ISO timestamps. Explicit process or
+   build conflicts block combined analysis. Missing identity remains unverified.
+5. Click **Analyze all attached evidence**. Inspect the selected artifact IDs;
+   detach inputs belonging to another incident. The report joins exact logged
+   classes/methods and thread names to dump evidence, including recorded retaining
+   edges. Source-reference candidates are labelled separately from recorded edges.
+6. Search log events by severity, excerpt text, exact thread, request/trace ID,
+   or time range. Open an event to resolve its stack to source and method context.
+   Combined reports can be exported as HTML or JSON and reopened from history.
+   Optional AI diagnosis receives selected structured log/dump evidence, never the
+   complete raw multi-GB log; its existing API-key consent flow still applies.
+
+The scanner recognizes common ISO-date Logback/Log4j/Spring/WildFly-style headers,
+Java exception continuations (`Caused by`, suppressed exceptions, frames), and
+JSON-lines keys such as `message`, `level`, `@timestamp`, `thread_name`,
+`logger_name`, `stack_trace`, `traceId`, and `requestId`. Abbreviated logger names,
+custom timestamp formats, and missing stack lines may remain unresolved. Gzip,
+archives and binary logs must be converted to uncompressed UTF-8 first.
+
+The **entire file is scanned**, but retained excerpts are bounded: a physical line
+prefix is at most 64 KiB, an event excerpt at most 32,768 characters, and an event
+has at most 128 indexed frames and 256 physical lines. Longer continuation groups
+are split and marked truncated. Coverage includes oversized lines, omitted frames,
+unrecognized events and timestamps that could not be aligned. Text search searches
+retained excerpts. All indexed events remain pageable on disk; summary and combined
+reports select bounded samples and report omissions. Combined matching searches
+up to 500 candidate classes and 200 thread names, prioritizes errors/warnings, and
+includes at most 100 matches. Its default time window is ±5 minutes when every
+attached dump has an aligned capture time; otherwise alignment stays explicit.
+
+Reports and SQLite event indexes persist in `ANALYSIS_DIR`; raw uploads in
+`DUMP_TMP_DIR` are removed after analysis. Deleting the saved log analysis removes
+its event index. Saved combined reports contain their selected evidence snapshot,
+so deleting the original log does not remove those exported/saved snapshots.
+Reserve space for both the upload and SQLite index during scanning; index size
+can exceed raw input size. Run a single backend process, as with existing job and
+source sessions. Interrupted jobs do not resume after a process restart; abandoned log uploads and
+unpublished log indexes are removed at startup.
+
+If deployed behind a reverse proxy, configure its body-size limit to at least
+5 GiB, permit long upload connections, and disable request buffering for this raw
+upload route where supported. The application cannot override a proxy's lower
+limit. This capacity is independent of heap object-index limits: attaching a log
+does not create an object graph for a heap whose indexing was skipped.
+
+Additional endpoints:
+
+```text
+POST   /api/analyze/server-log                  raw body; filename, timezone_offset
+GET    /api/jobs/{job_id}                       upload returns a job after transfer
+DELETE /api/jobs/{job_id}                       cancel log scan / remove job
+GET    /api/server-logs/{id}/events             after, limit, level, query, thread,
+                                               trace_id, request_id, since, until
+GET    /api/server-logs/{id}/events/{event_id}   optional source_session
+POST   /api/analyze/incident                   saved server_log_id, heap_id and/or
+                                               thread_id, optional gc_id,
+                                               source_session, window_seconds
+```
+
+Run the reproducible capacity check with
+`backend/.venv/bin/python backend/tools/benchmark_server_log.py --gib 5`.
+It exercises the production upload/index functions with streamed synthetic data,
+writes real temporary files, verifies byte/event counts and final-event queries,
+then removes its files. It is a synthetic capacity check, not a production
+throughput guarantee or a reverse-proxy/browser transport benchmark.

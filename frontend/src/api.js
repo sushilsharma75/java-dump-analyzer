@@ -185,3 +185,41 @@ export async function getLLMSummary(analysis, kind, apiKey, model, detail = "sum
   }
   return res.json();
 }
+
+/** Raw streamed body: no multipart pre-spooling or browser file.readAsText. */
+export function uploadServerLog(file, timezoneOffset, onProgress, signal) {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({ filename: file.name })
+    if (timezoneOffset) params.set('timezone_offset', timezoneOffset)
+    const xhr = new XMLHttpRequest()
+    const abort = () => xhr.abort()
+    const cleanup = () => signal?.removeEventListener('abort', abort)
+    xhr.open('POST', `${BASE}/api/analyze/server-log?${params}`)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.({ loaded: e.loaded, total: e.total }) }
+    xhr.onload = () => {
+      cleanup()
+      try {
+        const data = JSON.parse(xhr.responseText)
+        if (xhr.status < 200 || xhr.status >= 300) throw new Error(data.detail || `Log upload failed (${xhr.status})`)
+        resolve(data)
+      } catch (e) { reject(e) }
+    }
+    xhr.onerror = () => { cleanup(); reject(new Error('Network error uploading server log')) }
+    xhr.onabort = () => { cleanup(); reject(new Error('Server log upload cancelled')) }
+    if (signal?.aborted) { reject(new Error('Server log upload cancelled')); return }
+    signal?.addEventListener('abort', abort, { once: true })
+    xhr.send(file)
+  })
+}
+
+export async function analyzeIncident(serverLogId, heapId, threadId, gcId, sourceSession) {
+  const response = await fetch(`${BASE}/api/analyze/incident`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server_log_id: serverLogId, heap_id: heapId || null,
+      thread_id: threadId || null, gc_id: gcId || null, source_session: sourceSession || null }),
+  })
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.detail || `Combined analysis failed (${response.status})`)
+  return data
+}

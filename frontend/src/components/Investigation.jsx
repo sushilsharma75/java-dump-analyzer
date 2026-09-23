@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import SourceSnippet from './SourceSnippet'
+import RetentionTrace from './RetentionTrace'
 
 async function request(path, options) {
   const r = await fetch(path, options)
@@ -21,6 +21,7 @@ export default function Investigation({ analysis, sourceSession, onUpdate }) {
   const [busy, setBusy] = useState(false)
   const [weak, setWeak] = useState(false)
   useEffect(() => { setCapture(analysis.capture || {}); setObjects([]); setObject(null); setPaths(null); setThreads(null) }, [analysis.analysis_id])
+  useEffect(() => { setPaths(null) }, [sourceSession?.session_id])
   const id = analysis.object_index_id
   const act = async fn => { setError(null); setBusy(true); try { await fn() } catch (e) { setError(e.message) } finally { setBusy(false) } }
   const inspect = oid => act(async () => {
@@ -70,7 +71,7 @@ export default function Investigation({ analysis, sourceSession, onUpdate }) {
           })}>More references</button>
           <label className="block text-sm"><input type="checkbox" checked={weak} onChange={e => { setWeak(e.target.checked); setPaths(null) }} /> Include Reference.referent edges</label>
           <button className="btn-secondary" disabled={busy} onClick={() => act(async () => setPaths(await request(`/api/heap/${id}/objects/${object.oid}/roots?include_weak=${weak}&source_session=${sourceSession?.session_id || ''}`)))}>Find paths to GC roots</button>
-          {paths && <div><p className="text-sm">{paths.note} {paths.partial ? 'Search was limited.' : ''}</p>{paths.paths.map((p, i) => <div key={i} className="panel-inset p-3"><pre className="text-xs">{JSON.stringify(p.root)}</pre>{p.edges.map((e, j) => <div key={j}><button onClick={() => inspect(e.src)}>{e.src} → {e.field} → {e.dst}</button>{e.source && <SourceSnippet location={{ ...e.source, is_user_code: true }} />}</div>)}</div>)}</div>}
+          <RetentionTrace data={paths} onInspect={inspect} />
         </div>}
         <button className="btn-secondary" disabled={busy} onClick={() => act(async () => setThreads(await request(`/api/heap/${id}/threads`)))}>Inspect heap thread stacks and locals</button>
         {threads && <pre className="overflow-x-auto text-xs">{JSON.stringify(threads, null, 2)}</pre>}

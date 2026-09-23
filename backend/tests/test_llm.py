@@ -152,3 +152,14 @@ def test_generated_report_must_cite_existing_evidence(monkeypatch):
     import pytest
     with pytest.raises(llm.LLMRequestError, match='evidence'):
         asyncio.run(llm.generate_llm_summary({'findings':[{'evidence_id':'E-real','title':'Hypothesis'}]},'heap','test'))
+
+
+def test_unified_keeps_server_log_and_incident_evidence():
+    event = {'evidence_id': 'E-log123L1', 'excerpt': 'failure', 'frames': []}
+    bundle = {'server_log': {'counts': {'events': 100}, 'sample_events': [event]},
+              'incident': {'coverage': {'omitted_events': 99}, 'matches': [{'event': event}],
+                           'limitations': ['Class overlap is not causation.'], 'heap': {'histogram': ['do not duplicate']}}}
+    trimmed = llm._trim_for_llm(bundle, 'unified')
+    assert trimmed['server_log']['sample_events'][0]['evidence_id'] == 'E-log123L1'
+    assert trimmed['incident']['coverage']['omitted_events'] == 99
+    assert 'heap' not in trimmed['incident']

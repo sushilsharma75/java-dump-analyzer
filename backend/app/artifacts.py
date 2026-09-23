@@ -39,4 +39,5 @@ def remove(identifier):
         return False
     path.unlink()
     path_for(identifier, ".sqlite").unlink(missing_ok=True)
+    path_for(identifier, ".log.sqlite").unlink(missing_ok=True)
     return True

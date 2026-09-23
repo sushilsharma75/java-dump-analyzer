@@ -1,3 +1,4 @@
+import ServerLogWorkspace, { IncidentReport } from './components/ServerLogWorkspace'
 import DatabaseAnalysis from './components/DatabaseAnalysis'
 import AnalysisHistory from './components/AnalysisHistory'
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -37,6 +38,7 @@ export default function App() {
   const [threadAnalysis, setThreadAnalysis] = useState(null)
   const [heapAnalysis, setHeapAnalysis] = useState(null)
   const [gcAnalysis, setGcAnalysis] = useState(null)
+  const [serverLog, setServerLog] = useState(null)
 
   // Pinned baselines for delta comparison ({ analysis, name } or null).
   const [heapBaseline, setHeapBaseline] = useState(null)
@@ -245,6 +247,7 @@ export default function App() {
           if (kind === 'thread') setThreadAnalysis(saved)
           if (kind === 'heap') setHeapAnalysis(saved)
           if (kind === 'gc') setGcAnalysis(saved)
+          if (kind === 'server_log') setServerLog(saved)
         }} />}
         {view === 'landing' && section === 'jvm' && (threadAnalysis || heapAnalysis) && !(threadAnalysis && heapAnalysis) && (
           <div className="max-w-3xl mx-auto pt-8">
@@ -272,6 +275,10 @@ export default function App() {
             error={error}
           />
         )}
+        {section === 'jvm' && <ServerLogWorkspace log={serverLog} onLog={setServerLog}
+          heap={heapAnalysis} thread={threadAnalysis} gc={gcAnalysis} sourceSession={sourceSession}
+          onDetach={kind => ({ heap: setHeapAnalysis, thread: setThreadAnalysis, gc: setGcAnalysis }[kind])(null)} />}
+        {view === 'incident' && analysis && <div className="max-w-7xl mx-auto mt-6"><IncidentReport result={analysis} sourceSession={sourceSession} /></div>}
         {view === 'database' && analysis && <DatabaseAnalysis key={analysis.analysis_id} analysis={analysis} threadAnalysis={threadAnalysis} />}
         {view === 'heap_progress' && (
           <HeapProgress

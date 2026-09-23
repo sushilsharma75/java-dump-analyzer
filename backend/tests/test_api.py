@@ -129,3 +129,39 @@ def test_source_manifest_build_matching(client, tmp_path, monkeypatch):
     (root/'App.java').write_text('class App { void changed() {} }')
     idx=SourceIndex(root);idx.build()
     assert idx.provenance['manifest_valid'] is False
+
+
+def test_attach_source_refreshes_saved_retention_paths(client, tmp_path, monkeypatch):
+    from app import artifacts
+    monkeypatch.setattr(artifacts, 'ROOT', tmp_path)
+    src = tmp_path / 'src'
+    src.mkdir()
+    (src / 'Cache.java').write_text('''package sample;
+class Cache {
+    static Object retained;
+    void store(Object value) { retained = value; }
+}
+''')
+    b = HprofBuilder()
+    cache = b.load_class('sample.Cache')
+    leaf = b.load_class('sample.Leaf')
+    b.class_dump(leaf)
+    target = b.instance(leaf)
+    b.class_dump(cache, static_object_fields=[('retained', target)])
+    b.gc_root(cache, 'sticky_class')
+    response = client.post('/api/analyze/heap', files={'file': ('test.hprof', b.build())})
+    assert response.status_code == 200
+    identifier = response.json()['analysis_id']
+    session = client.post('/api/source/path', json={'path': str(src)}).json()['session_id']
+    updated = client.post(f'/api/analyses/{identifier}/source/{session}', json={})
+    assert updated.status_code == 200
+    edges = [edge for entry in updated.json()['dominators']
+             for trace in entry['root_paths'].get('paths', []) for edge in trace['edges']]
+    assert any(e.get('source', {}).get('repo_path') == 'Cache.java' for e in edges)
+    paths = client.get(f'/api/heap/{identifier}/objects/{hex(target)}/roots', params={'source_session': session})
+    assert paths.status_code == 200
+    edge = paths.json()['paths'][0]['edges'][0]
+    assert edge['source']['line'] == 3
+    assert edge['owner']['name'] == 'sample.Cache'
+    saved = client.get(f'/api/analyses/{identifier}').json()['analysis']
+    assert saved['dominators'] == updated.json()['dominators']

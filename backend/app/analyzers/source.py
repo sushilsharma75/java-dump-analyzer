@@ -269,7 +269,8 @@ class SourceIndex:
         if not resolved:
             return {"resolution": "ambiguous_or_unresolved", "class_name": class_name}
         path, snippet = resolved
-        methods = [m for m in self._symbols[path]["methods"] if m["name"] == method]
+        methods = [m for m in self._symbols[path]["methods"]
+                   if m["owner"] == class_name and (method is None or m["name"] == method)]
         if line:
             methods = [m for m in methods if m["line"] <= line <= m["end_line"]]
         result = {"resolution": self._symbols[path].get("parser", "lexical"), "repo_path": self.relative_path(path),
@@ -283,12 +284,14 @@ class SourceIndex:
         elif snippet:
             result["snippet"] = snippet.model_dump()
         fields = self._symbols[path].get("fields", [])
-        selected_fields = [f for f in fields if f["line"] == line] if line else []
+        selected_fields = [f for f in fields if f["owner"] == class_name and f["line"] == line] if line else []
         if selected_fields:
             clean = self._symbols[path]["clean"]
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             related = []
             for m in self._symbols[path]["methods"]:
+                if m["owner"] != class_name:
+                    continue
                 body = clean[m["start"]:m["end"]]
                 if any(re.search(r"\b" + re.escape(f["name"]) + r"\b", body) for f in selected_fields):
                     related.append({"method": m["name"], "start_line": m["line"],

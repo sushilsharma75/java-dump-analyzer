@@ -460,7 +460,7 @@ def object_detail(path, oid, offset=0, limit=100):
         db.close()
 
 
-def root_paths(path, oid, max_nodes=10000, max_depth=40, include_weak=False):
+def root_paths(path, oid, max_nodes=10000, max_depth=40, include_weak=False, source=None, build_verified=False):
     db = connect(path)
     try:
         queue = deque([(oid, [])])
@@ -490,13 +490,16 @@ def root_paths(path, oid, max_nodes=10000, max_depth=40, include_weak=False):
                     break
                 seen.add(e["src"])
                 queue.append((e["src"], chain + [e]))
-        return {
+        data = {
             "paths": paths,
             "visited": len(seen),
             "partial": limited or bool(queue),
             "reference_policy": "all" if include_weak else "strong only",
             "note": "Representative paths; no path within the search budget is not proof of unreachability.",
         }
+        from .heap_trace import enrich_root_paths
+        enrich_root_paths(path, data, source, build_verified)
+        return data
     finally:
         db.close()
 

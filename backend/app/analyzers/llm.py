@@ -123,7 +123,7 @@ async def generate_llm_summary(
     trimmed = _trim_for_llm(analysis, kind)
     if source:
         locations = []
-        bundles = [analysis] if kind != "unified" else [analysis.get(k) or {} for k in ("heap", "thread", "correlation")]
+        bundles = [analysis] if kind != "unified" else [analysis.get(k) or {} for k in ("heap", "thread", "correlation", "server_log", "incident")]
         seen = set()
         for bundle in bundles:
             for finding in bundle.get("findings", []):
@@ -250,7 +250,14 @@ def _trim_for_llm(analysis: Dict[str, Any], kind: str) -> Dict[str, Any]:
             out["correlation"] = a["correlation"]
         if a.get("gc"):
             out["gc"] = _trim_for_llm(a["gc"], "gc")
+        if a.get("server_log"):
+            out["server_log"] = _trim_for_llm(a["server_log"], "server_log")
+        if a.get("incident"):
+            out["incident"] = {k: a["incident"].get(k) for k in ("summary", "status", "inputs", "coverage", "limitations", "matches")}
         return out
+    if kind == "server_log":
+        a["sample_events"] = (a.get("sample_events") or [])[:20]
+        return a
     if kind == "gc":
         # The per-event series is for charting; the metrics + findings carry the
         # signal, so keep only a small sample of events for the model.

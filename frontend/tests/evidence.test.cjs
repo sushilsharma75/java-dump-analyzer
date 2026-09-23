@@ -10,6 +10,7 @@ function load(module, filename) {
   if (!filename.startsWith(root)) return loadJS(module, filename)
   const { code } = babel.transformFileSync(filename, {
     babelrc: false, configFile: false,
+    plugins: [() => ({ visitor: { MetaProperty(p) { if (p.node.meta.name === 'import') p.replaceWithSourceString('({env:{}})') } } })],
     presets: [['@babel/preset-env', { targets: { node: 'current' } }], ['@babel/preset-react', { runtime: 'automatic' }]],
   })
   module._compile(code, filename)
@@ -96,4 +97,61 @@ test('heap progress distinguishes parsing from remaining analysis', () => {
   assert.ok(html.includes('Analysis still running'))
   assert.ok(html.includes('parse eta'))
   assert.ok(!html.includes('0.0s'))
+})
+
+const RetentionTrace = require('../src/components/RetentionTrace.jsx').default
+test('retention trace displays chain, field methods, recorded roots and missing evidence', () => {
+  const data = { source_attached: true, partial: true, note: 'Representative paths', paths: [{
+    root: [{ oid: '0x1', kind_name: 'Java local', thread: 7, stack_status: 'available', frames: [
+      { index: 0, class_name: 'Cache', method_name: 'store', file_name: 'Cache.java', line: 5, holds_root: true },
+    ] }], edges: [{ src: '0x1', dst: '0x2', field: 'Cache.retained', strength: 'strong',
+      owner: { name: 'Cache' }, target: { name: 'Order' }, source: { repo_path: 'Cache.java', line: 3,
+        role: 'retaining_field', snippet: { start_line: 3, lines: ['Object retained;'] },
+        context: { related_field_methods: [{ method: 'store', start_line: 4, lines: ['retained = value;'], role: 'candidate field usage' }] } } }],
+  }] }
+  const html = renderToString(React.createElement(RetentionTrace, { data }))
+  for (const text of ['Cache.retained', 'Order', 'holds this local root', 'retained = value;', 'Search was limited.', 'do not prove']) assert.ok(html.includes(text), text)
+})
+
+const { LogEvent, IncidentReport, incidentReportHTML } = require('../src/components/ServerLogWorkspace.jsx')
+const ServerLogWorkspace = require('../src/components/ServerLogWorkspace.jsx').default
+const logEvent = { id: 1, evidence_id: 'E-log1', level: 'ERROR', start_line: 4, end_line: 8,
+  thread: 'worker-1', request_id: 'request-1', excerpt: '<script>alert(1)</script>', truncated: 1,
+  frames: [{ class_name: 'example.Cache', method: 'put', file: 'Cache.java', line: 4,
+    source: { repo_path: 'Cache.java', line: 4, role: 'logged_frame', snippet: { start_line: 4, lines: ['cache.put(value);'] } } }] }
+
+test('server log workspace exposes 5 GiB upload, selected artifacts and combined action', () => {
+  const html = renderToString(React.createElement(ServerLogWorkspace, { onLog() {}, heap: analysis }))
+  for (const text of ['5 GiB', 'Upload server.log', 'Analyze all attached evidence', 'Timezone', analysis.analysis_id]) assert.ok(html.includes(text), text)
+})
+test('log events and incident exports preserve evidence and escape log text', () => {
+  const result = { summary: 'One event', status: 'completed', matches: [{ event: logEvent, links: [{ kind: 'same_class_and_method' }], aligned_with: ['thread'], confidence: 'medium' }], limitations: ['Context is not causation.'] }
+  for (const html of [renderToString(React.createElement(LogEvent, { event: logEvent })), incidentReportHTML(result)]) {
+    for (const text of ['E-log1', '&lt;script&gt;', 'Cache.java', 'cache.put(value);']) assert.ok(html.includes(text), text)
+    assert.ok(!html.includes('<script>'))
+  }
+  const html = renderToString(React.createElement(IncidentReport, { result }))
+  for (const text of ['Combined JVM investigation', 'Export combined HTML', 'same_class_and_method', 'thread']) assert.ok(html.includes(text), text)
+})
+test('log client uploads the raw file and supports cancellation', async () => {
+  const { uploadServerLog } = require('../src/api.js')
+  const previous = global.XMLHttpRequest
+  let xhr
+  global.XMLHttpRequest = class {
+    constructor() { xhr = this; this.upload = {} }
+    open(method, url) { this.method = method; this.url = url }
+    setRequestHeader(key, value) { this.header = [key, value] }
+    send(body) { this.body = body }
+    abort() { this.onabort() }
+  }
+  try {
+    const file = { name: 'server log.log', size: 5 * 1024 ** 3 }
+    const controller = new AbortController()
+    const promise = uploadServerLog(file, '+05:30', null, controller.signal)
+    assert.equal(xhr.body, file)
+    assert.equal(xhr.header[1], 'application/octet-stream')
+    assert.ok(xhr.url.includes('timezone_offset=%2B05%3A30'))
+    controller.abort()
+    await assert.rejects(promise, /cancelled/)
+  } finally { global.XMLHttpRequest = previous }
 })

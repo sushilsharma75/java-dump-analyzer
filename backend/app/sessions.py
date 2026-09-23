@@ -72,7 +72,16 @@ class JobStore:
 
     def __init__(self):
         self._jobs: Dict[str, Dict[str, Any]] = {}
+        self._cancellations: Dict[str, Callable[[], None]] = {}
         self._lock = threading.Lock()
+
+    def on_cancel(self, job_id, callback):
+        with self._lock:
+            self._cancellations[job_id] = callback
+
+    def clear_cancel(self, job_id):
+        with self._lock:
+            self._cancellations.pop(job_id, None)
 
     def create(self, total_bytes: int = 0) -> str:
         job_id = uuid.uuid4().hex[:16]
@@ -159,6 +168,9 @@ class JobStore:
     def remove(self, job_id: str) -> bool:
         with self._lock:
             job = self._jobs.pop(job_id, None)
+            cancel = self._cancellations.pop(job_id, None)
+        if cancel:
+            cancel()
         if not job:
             return False
         tf = job.get("tempfile")

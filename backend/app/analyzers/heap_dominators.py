@@ -35,7 +35,7 @@ def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
     """Compute graph retention with explicit root and reference-strength semantics."""
     import tempfile
     from pathlib import Path
-    from .heap_index import build_index, retained, root_paths, object_detail
+    from .heap_index import build_index, retained, root_paths
 
     def run(path):
         r = retained(path, top_n)
@@ -43,7 +43,7 @@ def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
         findings = []
         for e in entries[:3]:
             e.root_paths = root_paths(
-                path, e.accumulation_object_id or e.object_id, max_nodes=5000
+                path, e.accumulation_object_id or e.object_id, max_nodes=5000, source=source
             )
             locations = []
             if source:
@@ -51,35 +51,16 @@ def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
 
                 seen = set()
                 for root_path in e.root_paths["paths"]:
-                    for edge in root_path["edges"]:
-                        field = edge["field"]
-                        if field.startswith("static:"):
-                            owner = object_detail(path, edge["src"], limit=1)
-                            cls, name = (
-                                (owner.get("name") if owner else None),
-                                field[7:],
-                            )
-                        elif "." in field:
-                            cls, name = field.rsplit(".", 1)
-                        else:
+                    candidates = [edge.get("source") for edge in root_path["edges"]]
+                    candidates += [frame.get("source") for root in root_path["root"]
+                                   for frame in root.get("frames", []) if frame.get("holds_root")]
+                    for loc in candidates:
+                        if not loc:
                             continue
-                        if not cls or (cls, name) in seen:
-                            continue
-                        seen.add((cls, name))
-                        loc = source.find_field(cls, name)
-                        if loc:
-                            locations.append(
-                                SourceLocation(
-                                    class_name=cls,
-                                    method="",
-                                    line=loc["line"],
-                                    repo_path=loc["repo_path"],
-                                    snippet=loc["snippet"],
-                                    is_user_code=True,
-                                    role="retaining_field",
-                                    resolution="declared_field",
-                                )
-                            )
+                        key = (loc["class_name"], loc["line"], loc["role"])
+                        if key not in seen:
+                            seen.add(key)
+                            locations.append(SourceLocation(**loc))
 
             if e.retained_bytes < max(1 << 20, r["reachable_bytes"] * 0.2):
                 continue

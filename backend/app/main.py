@@ -665,6 +665,14 @@ def set_capture(identifier: str, metadata: CaptureMetadata):
     provenance["build_verified"] = matched
     for finding in item["analysis"].get("findings", []):
         for loc in finding.get("source_locations", []): loc["build_verified"] = matched
+    for entry in item["analysis"].get("dominators", []):
+        for path in entry.get("root_paths", {}).get("paths", []):
+            locations = [edge.get("source") for edge in path["edges"]]
+            locations += [frame.get("source") for root in path["root"] for frame in root.get("frames", [])]
+            for loc in locations:
+                if loc:
+                    loc["build_verified"] = matched
+                    if loc.get("context"): loc["context"]["build_verified"] = matched
     return artifacts.save(item["analysis"], item["kind"])
 
 
@@ -691,6 +699,24 @@ def attach_source(identifier: str, session: str):
     for f in data.get("findings", []):
         for loc in f.get("source_locations", []): loc["build_verified"] = matched
     if item["kind"] == "heap":
+        from .analyzers.heap_trace import enrich_root_paths
+        index_path = artifacts.path_for(identifier, ".sqlite")
+        if index_path.exists():
+            for entry in data.get("dominators", []):
+                if entry.get("root_paths"):
+                    enrich_root_paths(index_path, entry["root_paths"], source, matched)
+                    locations = []
+                    for trace in entry["root_paths"]["paths"]:
+                        candidates = [edge.get("source") for edge in trace["edges"]]
+                        candidates += [frame.get("source") for root in trace["root"] for frame in root.get("frames", []) if frame.get("holds_root")]
+                        for loc in candidates:
+                            if loc:
+                                from .schemas import SourceLocation
+                                resolved = SourceLocation(**loc).model_dump()
+                                if resolved not in locations: locations.append(resolved)
+                    for finding in data.get("findings", []):
+                        if f"object {entry['object_id']}" in finding.get("evidence", []):
+                            finding["source_locations"] = locations
         for key in ("histogram", "top_classes_by_size", "top_classes_by_count"):
             for entry in data.get(key, [])[:30]:
                 entry["references"] = source.find_references(entry["class_name"], max_results=8)
@@ -720,24 +746,13 @@ def heap_object(identifier: str, oid: str, offset: int = Query(0, ge=0), limit: 
 def heap_roots(identifier: str, oid: str, include_weak: bool = False,
                max_nodes: int = Query(10000, ge=1, le=100000), max_depth: int = Query(40, ge=1, le=100),
                source_session: Optional[str] = None):
-    data = heap_index.root_paths(_index(identifier), oid, max_nodes, max_depth, include_weak)
     source = _resolve_source(source_session)
-    if source:
-        for path in data["paths"]:
-            for edge in path["edges"]:
-                field = edge["field"]
-                owner = heap_index.object_detail(_index(identifier), edge["src"], limit=1)
-                if field.startswith("static:") and owner and owner.get("name"):
-                    loc = source.find_static_field(owner["name"], field[7:])
-                elif "." in field:
-                    cls, name = field.rsplit(".", 1)
-                    loc = source.find_field(cls, name)
-                else: loc = None
-                if loc:
-                    build = (_artifact(identifier)["analysis"].get("capture") or {}).get("build_id")
-                    matched = bool(source.provenance.get("manifest_valid") and build and build == source.provenance.get("build_id"))
-                    edge["source"] = {**loc, "role": "retaining_field", "build_verified": matched}
-    return data
+    build = (_artifact(identifier)["analysis"].get("capture") or {}).get("build_id")
+    matched = bool(source and source.provenance.get("manifest_valid") and build
+                   and build == source.provenance.get("build_id"))
+    return heap_index.root_paths(_index(identifier), oid, max_nodes, max_depth,
+                                 include_weak, source=source, build_verified=matched)
+
 
 
 @app.get("/api/heap/{identifier}/threads")
@@ -747,3 +762,5 @@ def heap_stack_threads(identifier: str):
 
 from .database import router as database_router
 app.include_router(database_router)
+from .server_logs import router as server_logs_router
+app.include_router(server_logs_router)
