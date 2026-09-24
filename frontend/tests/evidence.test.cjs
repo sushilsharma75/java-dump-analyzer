@@ -212,3 +212,20 @@ test('timezone is pre-filled from the browser and alignment warnings are visible
   const html = renderToString(React.createElement(IncidentReport, { result: { summary: 's', status: 'completed', matches: [], limitations: [note, 'Context is not causation.'] } }))
   assert.ok(html.includes('role="note"') && html.includes('timezone-aligned'))
 })
+
+test('incident report leads with log findings, timeline and readable match explanations', () => {
+  const { IncidentReport } = require('../src/components/ServerLogWorkspace.jsx')
+  const bucket = (start, extra = {}) => ({ start, total: 3, errors: 2, warnings: 1, oom: 0, deploy: 0, undeploy: 0, server_start: 0, heap_dump: 0, ...extra })
+  const result = {
+    summary: '1 OutOfMemoryError (Java heap space) in the log', status: 'completed', limitations: [],
+    log_findings: [{ evidence_id: 'E-oom', severity: 'critical', category: 'server_log_memory', title: 'OutOfMemoryError: Java heap space logged 1×', description: 'The Java heap was full.', evidence: [], source_locations: [] }],
+    correlation: { findings: [] },
+    timeline: { basis: 'UTC', bucket_minutes: 10, buckets: [bucket('2026-09-23T09:50+00:00', { oom: 1 }), bucket('2026-09-23T10:00+00:00')],
+                captures: [{ kind: 'heap', at: '2026-09-23T10:00:00.000+00:00', bucket: '2026-09-23T10:00+00:00' }] },
+    matches: [{ event: { ...logEvent, evidence_id: 'E-1' }, links: [{ kind: 'memory_event' }], explanation: ['This event is an OutOfMemoryError: Java heap space.'], aligned_with: ['heap'], confidence: 'medium', score: 7 }],
+  }
+  const html = renderToString(React.createElement(IncidentReport, { result }))
+  for (const text of ['What the server log adds', 'OutOfMemoryError: Java heap space logged', 'Errors per 10 minutes', 'OOM', 'CAPTURE', 'heap dump captured', 'This event is an OutOfMemoryError', 'Raw evidence links'])
+    assert.ok(html.includes(text), text)
+  assert.ok(html.indexOf('What the server log adds') < html.indexOf('Related log events'))
+})

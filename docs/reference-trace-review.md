@@ -78,6 +78,36 @@ The ±window filter then discarded every event, producing
   labelled unaligned and low confidence, with a visible warning.
 - The window is selectable in the report (±5 minutes to ±24 hours).
 
+### What the log adds to a dump (2026-09-24)
+
+Name matching alone produced raw link lists with no conclusions. The log indexer
+now records memory and lifecycle markers (`markers` table in the log index):
+`OutOfMemoryError` with its message, Tomcat/WildFly deploy and undeploy, server
+start (Tomcat, WildFly, Spring Boot) and `Dumping heap to …` from
+`-XX:+HeapDumpOnOutOfMemoryError`. `backend/app/analyzers/log_insights.py` turns
+them into findings that lead the combined report:
+
+- **OutOfMemoryError:** kind and what it means for the evidence (heap space vs
+  Metaspace vs direct buffers vs native threads), count, first/last time and
+  minutes before each capture, the most frequent first application frame across
+  up to 200 OOM events with its source snippet, and stack classes the heap also
+  singles out.
+- **Restart between the OOM and the heap capture:** the dump came from a
+  restarted JVM and may not hold the failing state.
+- **Automatic heap dump:** a `Dumping heap to` line near the capture time
+  confirms the dump reflects the failure.
+- **Redeploys against heap classloaders:** stale loaders plus logged deploys
+  corroborate a redeploy leak; repeated deploys with one loader rule it out.
+- **Timeline:** errors, warnings and markers per 10 minutes for 2 hours before
+  the latest capture, plus a finding when errors rise at least 3× in the last
+  30 minutes. Unaligned logs use the log's own clock, labelled as such.
+
+Matching now also uses classes named by heap findings (retention holders, static
+fields) and live thread names recorded in the heap, and ranks events by the
+strength of shared evidence, with a plain-language explanation for each.
+Logs indexed before this change recover markers from header lines and exception
+names only; re-upload for complete detection.
+
 Remaining limits: abbreviated logger names (`c.a.OrderCache`) do not match;
 matches are shared context, not causation. A heap-only analysis above the
 dominator limits has only histogram classes to match, so attaching a thread dump

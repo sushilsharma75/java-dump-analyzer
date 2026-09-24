@@ -19,6 +19,26 @@ LEVEL = re.compile(r'\b(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|SEVERE)\b')
 DATE = re.compile(r'\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?')
 FRAME = re.compile(r'^\s*at\s+(?:[^\s(]*/)?(?P<class>[\w$]+(?:\.[\w$]+)*)\.(?P<method>[\w$<>]+)\((?P<file>[^():]+)(?::(?P<line>\d+))?\)')
 EXCEPTION = re.compile(r'(?<![\w.])((?:[\w$]+\.)*[\w$]*(?:Exception|Error|Throwable))\b')
+# Memory and lifecycle events a heap analysis cannot see: when the JVM ran out of
+# memory, and when applications were (re)deployed or the server started.
+MAX_MARKERS = 8
+_ARTIFACT = r'["\[]?([^\s"\]]+)'
+MARKERS = [
+    ('oom', re.compile(r'java\.lang\.OutOfMemoryError(?::\s*([^\r\n]{1,200}))?')),
+    # Tomcat
+    ('deploy', re.compile(r'Deploying (?:web application (?:archive|directory)|configuration descriptor) ' + _ARTIFACT)),
+    ('undeploy', re.compile(r'Undeploying context ' + _ARTIFACT)),
+    ('deploy', re.compile(r'Reloading Context with name ' + _ARTIFACT)),
+    ('server_start', re.compile(r'Server startup in \[?(\d+)\]? ?(?:ms|milliseconds)')),
+    # WildFly / JBoss EAP
+    ('deploy', re.compile(r'WFLYSRV0010: Deployed "([^"]+)"')),
+    ('undeploy', re.compile(r'WFLYSRV0009: Undeployed "([^"]+)"')),
+    ('server_start', re.compile(r'WFLYSRV0025: (.{1,120}?) started')),
+    # -XX:+HeapDumpOnOutOfMemoryError writes this to stdout/console logs
+    ('heap_dump', re.compile(r'Dumping heap to (\S+)')),
+    # Spring Boot and generic JVM startup
+    ('server_start', re.compile(r'Started ([\w$.]+) in [\d.]+ seconds')),
+]
 IDENTIFIERS = {
     'trace_id': re.compile(r'\b(?:trace[_-]?id|traceId)\s*[=:]\s*["\']?([\w.-]{1,128})', re.I),
     'request_id': re.compile(r'\b(?:request[_-]?id|requestId|correlation[_-]?id)\s*[=:]\s*["\']?([\w.-]{1,128})', re.I),
@@ -111,6 +131,7 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
               'unaligned_timestamps': 0, 'replacement_characters': 0}
     digest = hashlib.sha256()
     current = None
+    marker_counts = {}
     last_progress = 0
     try:
         db.executescript('''
@@ -119,6 +140,8 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
                 thread TEXT, logger TEXT, trace_id TEXT, request_id TEXT, message TEXT,
                 exception TEXT, frames TEXT, excerpt TEXT, truncated INTEGER, format TEXT);
             CREATE TABLE frames(event_id INTEGER, class_name TEXT, method TEXT, line INTEGER);
+            CREATE TABLE markers(event_id INTEGER, kind TEXT, detail TEXT);
+            CREATE INDEX marker_kind ON markers(kind,event_id);
             CREATE INDEX event_level ON events(level,id);
             CREATE INDEX event_time ON events(timestamp,id);
             CREATE INDEX event_thread ON events(thread,id);
@@ -146,6 +169,9 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
                 int(current['truncated']), current['format']))
             db.executemany('INSERT INTO frames VALUES(?,?,?,?)',
                            [(eid, f['class_name'], f['method'], f['line']) for f in current['frames']])
+            db.executemany('INSERT INTO markers VALUES(?,?,?)', [(eid, k, d) for k, d in current['markers']])
+            for kind, _ in current['markers']:
+                marker_counts[kind] = marker_counts.get(kind, 0) + 1
             if eid % 2000 == 0:
                 db.commit()
 
@@ -189,7 +215,7 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
                                      'logger': None, 'trace_id': None, 'request_id': None,
                                      'message': text.rstrip(), 'body': text, 'format': 'unrecognized'}
                 current.update(start_line=counts['lines'], byte_start=start, excerpt='', frames=[],
-                               exceptions=[], truncated=False, line_count=0)
+                               exceptions=[], markers=[], truncated=False, line_count=0)
                 current['level'] = {'WARNING': 'WARN', 'SEVERE': 'ERROR'}.get(current['level'], current['level'])
                 if current['level'] not in ('TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'):
                     current['level'] = 'UNKNOWN'
@@ -208,6 +234,17 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
                 exc = EXCEPTION.search(line)
                 if exc:
                     current['exceptions'] = (current['exceptions'] + [exc[1]])[-16:]
+                if len(current['markers']) < MAX_MARKERS and not line.lstrip().startswith('at '):
+                    for kind, pattern in MARKERS:
+                        hit = pattern.search(line)
+                        if hit:
+                            detail = (hit[1] or '').strip()
+                            if kind in ('deploy', 'undeploy'):
+                                detail = artifact_name(detail)
+                            marker = (kind, detail[:200])
+                            if marker not in current['markers']:
+                                current['markers'].append(marker)
+                            break
                 fr = FRAME.match(line)
                 if fr:
                     if len(current['frames']) < MAX_FRAMES:
@@ -227,7 +264,7 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
         span = db.execute('SELECT min(timestamp),max(timestamp),count(timestamp) FROM events').fetchone()
         return {'summary': f"{counts['events']:,} log events · {levels.get('ERROR', 0) + levels.get('FATAL', 0):,} errors · {counts['lines']:,} lines",
                 'file_size_bytes': counts['bytes'], 'sha256': digest.hexdigest(), 'counts': counts,
-                'levels': levels, 'exceptions': exceptions,
+                'levels': levels, 'exceptions': exceptions, 'markers': marker_counts,
                 'time_range': {'start': span[0], 'end': span[1], 'aligned_events': span[2], 'assumed_offset': offset},
                 'capture': {}, 'findings': [], 'parse_coverage': {'status': 'completed', 'full_scan': True,
                     'excerpt_limits': {'line_bytes': LINE_BYTES, 'event_characters': EVENT_CHARS, 'frames_per_event': MAX_FRAMES, 'lines_per_event': MAX_EVENT_LINES}},
@@ -239,6 +276,12 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
                                 'Exception summaries use the last exception named in each retained event; causes and suppressed exceptions remain in the excerpt.']}
     finally:
         db.close()
+
+
+def artifact_name(value):
+    """'/opt/tomcat/webapps/orders.war', '/orders' and 'orders.war' all name 'orders'."""
+    value = (value or '').replace('\\', '/').rstrip('/').rsplit('/', 1)[-1]
+    return re.sub(r'\.(?:war|ear|jar|xml)$', '', value, flags=re.I) or 'ROOT'
 
 
 def event_dict(row, identifier):
