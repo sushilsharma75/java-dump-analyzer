@@ -4,6 +4,7 @@ import Findings from './Findings'
 import SourceSnippet from './SourceSnippet'
 import RetentionTrace from './RetentionTrace'
 import LLMPanel from './LLMPanel'
+import LogTimeline from './LogTimeline'
 import { fmtBytes } from '../report'
 import { uploadServerLog, getJob, deleteJob } from '../api'
 
@@ -50,6 +51,8 @@ function exportHTML(result) {
 
 export function IncidentReport({ result, sourceSession }) {
   const [limit, setLimit] = useState(10)
+  // Saved reports from before log findings existed keep everything in `findings`.
+  const dumpFindings = result.log_findings ? (result.correlation?.findings || []) : (result.findings || [])
   return <section className="panel p-5 space-y-4">
     <h3 className="font-display text-lg">Combined JVM investigation</h3>
     <p>{result.summary}</p>
@@ -62,19 +65,30 @@ export function IncidentReport({ result, sourceSession }) {
     <details open={result.status === 'incompatible'}><summary>Input identities, coverage and limitations</summary>
       <pre className="text-xs overflow-x-auto whitespace-pre-wrap">{JSON.stringify({ inputs: result.inputs, coverage: result.coverage, limitations: result.limitations }, null, 2)}</pre>
     </details>
-    {!!result.findings?.length && <Findings findings={result.findings} />}
+    {result.status !== 'incompatible' && <div className="space-y-3">
+      <h4 className="font-display text-base">What the server log adds</h4>
+      {result.log_findings?.length
+        ? <Findings findings={result.log_findings} />
+        : <p className="text-sm text-bone-400">The log records no OutOfMemoryError, restart, redeploy or error surge that bears on this dump. Its role here is the related events below.</p>}
+      <LogTimeline timeline={result.timeline} />
+    </div>}
+    {!!dumpFindings.length && <Findings findings={dumpFindings} />}
     {!!result.heap?.dominators?.length && <details><summary>Heap reference chains and source</summary>
       {result.heap.dominators.filter(entry => entry.root_paths?.paths?.length).map(entry => <div key={entry.object_id} className="my-3">
         <h4>{entry.class_name} @ {entry.object_id} · {fmtBytes(entry.retained_bytes)} retained</h4>
         <RetentionTrace data={entry.root_paths} />
       </div>)}
     </details>}
+    {!!result.matches?.length && <h4 className="font-display text-base">Related log events, strongest evidence first</h4>}
     {(result.matches || []).slice(0, limit).map(match => <details key={match.event.evidence_id} className="panel-inset p-3">
       <summary>{match.event.level} · {match.event.exception || match.event.message?.slice(0, 120)} · {match.event.evidence_id}</summary>
       <p className="my-2">Time aligned with: {match.aligned_with.join(', ') || 'unverified'} · Confidence: {match.confidence}</p>
-      <p>These links identify shared context; they do not prove an allocation or retaining call.</p>
-      <pre className="text-xs overflow-x-auto whitespace-pre-wrap">{JSON.stringify(match.links, null, 2)}</pre>
-      {!!match.links_omitted && <p>{match.links_omitted} additional links omitted.</p>}
+      {!!match.explanation?.length && <ul className="text-sm" style={{ listStyle: 'disc', paddingLeft: 20, margin: '8px 0' }}>{match.explanation.map(text => <li key={text}>{text}</li>)}</ul>}
+      <p className="text-xs text-bone-500">Shared context, not proof of an allocation or retaining call.</p>
+      <details><summary className="text-xs">Raw evidence links</summary>
+        <pre className="text-xs overflow-x-auto whitespace-pre-wrap">{JSON.stringify(match.links, null, 2)}</pre>
+        {!!match.links_omitted && <p>{match.links_omitted} additional links omitted.</p>}
+      </details>
       <LogEvent event={match.event} />
     </details>)}
     {(result.matches || []).length > limit && <button className="btn-secondary" onClick={() => setLimit(limit + 10)}>Show more matching events</button>}
