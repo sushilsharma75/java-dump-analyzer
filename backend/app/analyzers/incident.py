@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from . import log_insights, server_log
 from .correlate import correlate
 from .evidence import compatibility, stamp
+from .heap_deployments import _JVM_THREAD_NAMES
 
 
 def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None, window_seconds=300):
@@ -52,7 +53,7 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
                     heap_evidence.setdefault(cls, []).append({'kind': 'heap_finding', 'class_name': cls,
                         'finding': finding.get('title'), 'evidence_id': finding.get('evidence_id')})
         for entry in heap.get('dominators', [])[:25]:
-            if entry.get('class_name'):
+            if entry.get('class_name') and is_user_code(entry['class_name']):
                 classes.add(entry['class_name'])
                 heap_evidence.setdefault(entry['class_name'], []).append({'kind': 'dominator',
                     'object_id': entry['object_id'], 'retained_bytes': entry.get('retained_bytes')})
@@ -61,20 +62,24 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
                     cls = (edge.get('owner') or {}).get('name')
                     if not cls and '.' in edge['field'] and not edge['field'].startswith('<'):
                         cls = edge['field'].rsplit('.', 1)[0]
-                    if cls:
+                    if cls and is_user_code(cls):
                         classes.add(cls)
                         heap_evidence.setdefault(cls, []).append({'kind': 'recorded_retaining_edge',
                             'src': edge['src'], 'dst': edge['dst'], 'field': edge['field'], 'strength': edge['strength']})
     # A heap dump records live thread names too, even without a thread dump.
+    # JVM-internal and unattributed threads (main, Finalizer, GC) name nothing specific.
     heap_threads = {t['name']: t for t in ((heap or {}).get('thread_ownership') or {}).get('threads', [])
-                    if t.get('name') and t.get('live')}
+                    if t.get('name') and t.get('live') and t['name'] != 'main'
+                    and (t.get('deployment_id') or t.get('is_user_code'))
+                    and not t['name'].startswith(_JVM_THREAD_NAMES)}
     frame_threads = {}
     for t in (thread or {}).get('threads', []):
         if t.get('name'):
             thread_names.add(t['name'])
         for frame in t.get('stack', []):
             cls = frame.get('class_name')
-            if cls:
+            # java.lang.Thread.run and framework frames are on nearly every logged stack.
+            if cls and is_user_code(cls):
                 classes.add(cls)
                 frame_threads.setdefault((cls, frame.get('method')), set()).add(t.get('name', '?'))
     # Source references bridge value classes in the heap to application owner methods.
@@ -183,7 +188,8 @@ def analyze_incident(log, log_path, heap=None, thread=None, gc=None, source=None
         matches.sort(key=lambda m: (-m['score'], rank.get(m['event']['level'], 3), m['event']['id']))
         matches = matches[:100]
         captures = _captures(bundles)
-        heap_classes = {cls: ev[0]['kind'].replace('_', ' ') for cls, ev in heap_evidence.items()}
+        heap_classes = {cls: max((e['kind'] for e in ev), key=lambda k: _HEAP_WEIGHTS.get(k, 1)).replace('_', ' ')
+                        for cls, ev in heap_evidence.items()}
         life, deploy_count = log_insights.lifecycle_findings(db, captures, log_aligned, heap)
         ooms, memory_events = log_insights.oom_findings(db, captures, log_aligned, heap_classes, deploy_count, source, build_verified)
         line = log_insights.timeline(db, captures, log_aligned)

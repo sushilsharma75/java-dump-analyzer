@@ -168,16 +168,19 @@ def lifecycle_findings(db, captures, aligned, heap):
     findings = []
     starts = db.execute("""SELECT e.*, m.detail FROM markers m JOIN events e ON e.id=m.event_id
                            WHERE m.kind='server_start' ORDER BY e.id""").fetchall()
-    first_oom = db.execute("""SELECT e.* FROM markers m JOIN events e ON e.id=m.event_id
-                              WHERE m.kind='oom' ORDER BY e.id LIMIT 1""").fetchone()
     heap_capture = next((at for kind, at in captures if kind == 'heap'), None)
-    if first_oom and heap_capture and aligned and first_oom['timestamp']:
-        restarts = [s for s in starts if s['timestamp'] and first_oom['timestamp'] < s['timestamp'] < heap_capture]
+    # The latest OOM before the capture: an earlier episode followed by a restart
+    # and a fresh OOM still leaves the dump showing the failing state.
+    last_oom = db.execute("""SELECT e.* FROM markers m JOIN events e ON e.id=m.event_id
+                             WHERE m.kind='oom' AND e.timestamp <= ? ORDER BY e.timestamp DESC, e.id DESC LIMIT 1""",
+                          (heap_capture,)).fetchone() if heap_capture and aligned else None
+    if last_oom:
+        restarts = [s for s in starts if s['timestamp'] and last_oom['timestamp'] < s['timestamp'] < heap_capture]
         if restarts:
             findings.append(Finding(severity=Severity.WARNING, category='server_log_lifecycle',
                 title='Server restarted after the OutOfMemoryError and before the heap dump',
                 description='The heap dump was taken from the restarted JVM, so it may not contain the state that caused the OutOfMemoryError.',
-                evidence=[f"First OutOfMemoryError at {first_oom['timestamp']} (line {first_oom['start_line']:,})",
+                evidence=[f"Last OutOfMemoryError before the capture at {last_oom['timestamp']} (line {last_oom['start_line']:,})",
                           *[f"Server start at {s['timestamp']} (line {s['start_line']:,})" for s in restarts[:3]],
                           f'Heap captured at {heap_capture}'],
                 likely_cause='A restart clears the heap; a leak must build up again before a dump shows it.',
@@ -227,7 +230,7 @@ def lifecycle_findings(db, captures, aligned, heap):
                 limitations=['The redeploy may predate the log file, or its message format is not recognized.']))
         elif deploy_n >= 2 and len(deps) == 1:
             findings.append(Finding(severity=Severity.INFO, category='server_log_lifecycle',
-                title=f'{name} was redeployed {deploy_n}× and the heap holds a single classloader for it',
+                title=f'{name} was deployed {deploy_n}× ({deploy_n - 1} redeploys) and the heap holds a single classloader for it',
                 description='The redeploys recorded in the log did not leave old classloaders behind in this heap.',
                 evidence=[f'Log: {deploy_n} deploy events for {name}'], conclusion='observation', confidence='medium'))
     return findings, sum(n for kinds in deploys.values() for n, _ in [kinds.get('deploy', (0, None))])
@@ -275,13 +278,16 @@ def timeline(db, captures, aligned):
                               WHERE {column} BETWEEN ? AND ? GROUP BY b, m.kind""", (lo, hi)):
         if row['b'] in buckets and row['kind'] in buckets[row['b']]:
             buckets[row['b']][row['kind']] = row['n']
+    note = None
+    if not any(b['total'] for b in buckets.values()):
+        note = 'No log events in this range; the log may not cover the time of the capture.'
     marks = []
     if aligned:
         for kind, at in captures:
             b = _floor(datetime.fromisoformat(at)).strftime('%Y-%m-%dT%H:%M')[:15]
             if b in buckets:
                 marks.append({'kind': kind, 'at': at, 'bucket': buckets[b]['start']})
-    return {'basis': basis, 'bucket_minutes': BUCKET_MINUTES, 'buckets': list(buckets.values()), 'captures': marks}
+    return {'basis': basis, 'bucket_minutes': BUCKET_MINUTES, 'buckets': list(buckets.values()), 'captures': marks, 'note': note}
 
 
 def timeline_findings(line, aligned):
