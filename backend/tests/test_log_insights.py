@@ -38,7 +38,9 @@ def _heap():
             'top_classes_by_size': [{'class_name': 'byte[]', 'instance_count': 10}],
             'findings': [{'title': 'Retention path: OrderCache.entries holds 80% of the heap', 'evidence_id': 'E-1',
                           'source_locations': [{'class_name': 'com.acme.OrderCache', 'method': 'entries'}]}],
-            'thread_ownership': {'threads': [{'name': 'report-thread', 'class_name': 'com.acme.ReportThread', 'live': True}]},
+            'thread_ownership': {'threads': [{'name': 'report-thread', 'class_name': 'com.acme.ReportThread', 'live': True, 'is_user_code': True},
+                                             {'name': 'main', 'class_name': 'java.lang.Thread', 'live': True, 'deployment_id': '0x9'},
+                                             {'name': 'Finalizer', 'class_name': 'java.lang.ref.Finalizer$FinalizerThread', 'live': True, 'deployment_id': '0x9'}]},
             'deployments': [{'id': '0x1', 'artifact': 'orders.war', 'name': '/orders', 'is_webapp': True, 'stale': True, 'live_thread_count': 1},
                             {'id': '0x2', 'artifact': 'orders.war', 'name': '/orders', 'is_webapp': True, 'stale': True}]}
 
@@ -87,7 +89,7 @@ def test_restart_between_oom_and_capture_is_flagged(tmp_path):
     heap = {**_heap(), 'deployments': [{'artifact': 'orders.war', 'is_webapp': True}]}
     _, clean = _run(tmp_path, heap=heap, name='clean.sqlite')
     assert not _titled(clean, 'Server restarted')
-    assert _titled(clean, 'orders was redeployed 2× and the heap holds a single classloader')
+    assert _titled(clean, 'orders was deployed 2× (1 redeploys) and the heap holds a single classloader')
 
 
 def test_heap_finding_classes_and_heap_threads_rank_matches(tmp_path):
@@ -133,3 +135,34 @@ def test_legacy_index_without_markers_recovers_oom(tmp_path):
     assert _titled(result, 'OutOfMemoryError: Java heap space')
     assert _titled(result, 'Redeploy leak corroborated')
     assert any('indexed before memory/lifecycle event extraction' in n for n in result['limitations'])
+
+
+def test_restart_before_a_later_oom_is_not_flagged(tmp_path):
+    """OOM, restart, then a fresh OOM before the capture: the dump shows the failing state."""
+    early = (b'2026-09-23 07:00:00.000+00:00 ERROR [w] com.acme.Web - failed\n'
+             b'java.lang.OutOfMemoryError: Java heap space\n'
+             b'2026-09-23 07:05:00.000+00:00 INFO [main] org.apache.catalina.startup.Catalina - Server startup in [4000] milliseconds\n')
+    _, result = _run(tmp_path, raw=early + _log())
+    assert not _titled(result, 'Server restarted')
+    assert _titled(result, 'OutOfMemoryError: Java heap space logged 2')
+
+
+def test_jvm_threads_and_jdk_frames_do_not_create_matches(tmp_path):
+    raw = (b'2026-09-23 09:59:00.000+00:00 INFO [main] com.acme.Boot - started\n'
+           b'2026-09-23 09:59:01.000+00:00 ERROR [pool-1] com.acme.Job - failed\n'
+           b'java.lang.IllegalStateException: x\n\tat java.lang.Thread.run(Thread.java:840)\n')
+    heap = {**_heap(), 'findings': [], 'deployments': []}
+    thread = {'analysis_id': 'b' * 32, 'capture': {'captured_at': '2026-09-23T10:00:00Z'},
+              'threads': [{'name': 'worker', 'stack': [{'class_name': 'java.lang.Thread', 'method': 'run'}]}]}
+    path = tmp_path / 'log.sqlite'
+    report = server_log.build_log_index(io.BytesIO(raw), path)
+    report['analysis_id'] = 'a' * 32
+    result = analyze_incident(report, path, heap=heap, thread=thread)
+    assert result['coverage']['heap_threads'] == 1
+    assert result['matches'] == []
+
+
+def test_timeline_notes_when_the_log_does_not_cover_the_capture(tmp_path):
+    heap = {**_heap(), 'capture': {'captured_at': '2026-09-25T10:00:00Z'}}
+    _, result = _run(tmp_path, heap=heap)
+    assert result['timeline']['note'].startswith('No log events in this range')

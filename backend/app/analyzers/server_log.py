@@ -39,6 +39,8 @@ MARKERS = [
     # Spring Boot and generic JVM startup
     ('server_start', re.compile(r'Started ([\w$.]+) in [\d.]+ seconds')),
 ]
+# One cheap search per line before trying the individual marker patterns.
+MARKER_HINT = re.compile(r'OutOfMemoryError|eploy|Reloading Context|Server startup|WFLYSRV00|Started |Dumping heap')
 IDENTIFIERS = {
     'trace_id': re.compile(r'\b(?:trace[_-]?id|traceId)\s*[=:]\s*["\']?([\w.-]{1,128})', re.I),
     'request_id': re.compile(r'\b(?:request[_-]?id|requestId|correlation[_-]?id)\s*[=:]\s*["\']?([\w.-]{1,128})', re.I),
@@ -234,7 +236,7 @@ def build_log_index(fp, path, *, offset=None, progress=None, cancelled=lambda: F
                 exc = EXCEPTION.search(line)
                 if exc:
                     current['exceptions'] = (current['exceptions'] + [exc[1]])[-16:]
-                if len(current['markers']) < MAX_MARKERS and not line.lstrip().startswith('at '):
+                if len(current['markers']) < MAX_MARKERS and MARKER_HINT.search(line) and not line.lstrip().startswith('at '):
                     for kind, pattern in MARKERS:
                         hit = pattern.search(line)
                         if hit:

@@ -33,6 +33,7 @@ export default function LogTimeline({ timeline }) {
       <h4 className="font-display text-base">{`Errors per ${minutes} minutes before the capture`}</h4>
       <span className="text-xs text-bone-500">{basis} · peak {max.toLocaleString()}</span>
     </div>
+    {timeline.note && <p className="text-sm text-flag-warning" role="note">{timeline.note}</p>}
     <p className="text-sm text-bone-300" style={{ minHeight: '1.25rem' }} aria-live="polite">{active >= 0 ? describe(buckets[active], captures) : 'Hover a bar for details.'}</p>
     <div className="border-b border-ink-600/60" style={{ ...ROW, alignItems: 'flex-end', height: 128 }} onMouseLeave={() => setHover(null)}>
       {buckets.map((b, i) => {
