@@ -1438,18 +1438,11 @@ def _build_static_field_findings(
     by_count: List[ClassHistogramEntry],
     by_size: List[ClassHistogramEntry],
 ) -> List[Finding]:
-    """Turn static GC-root object fields of user code into a source-pinpointed finding.
+    """Locate application static collection declarations for investigation.
 
-    Heap dumps have no stack traces, so we can't see *who* allocated an object.
-    But static fields are GC roots that are never released — the classic
-    "someone left a cache/registry unbounded" leak — and we *can* tie them to an
-    exact line of the user's source. Strategy:
-
-      * With source attached: resolve each static field's declared type. Only
-        raise a real warning for collection/cache-typed fields (the true leak
-        shape), so we don't flag every `static final Logger`.
-      * Without source: stay quiet unless the histogram already looks
-        container-dominated, then emit a gentle INFO nudge to attach source.
+    A static edge is an ownership lead. Its referent may be released by field
+    reassignment, cleanup or class unloading. Recorded thread stacks, when
+    present, do not establish the allocation history of these objects.
     """
     if not static_object_fields:
         return []
@@ -1486,9 +1479,8 @@ def _build_static_field_findings(
             title=f"{len(suspects)} static field(s) in your code hold live objects",
             description=(
                 "The heap is dominated by collection internals, and your application "
-                "code has static fields holding live objects. Static fields are GC "
-                "roots — they're never garbage-collected — so an unbounded static "
-                "collection is the most common cause of this shape. Attach your source "
+                "code has static fields referencing objects. Check whether their classes "
+                "are reachable and whether these fields own the observed consumers. Attach your source "
                 "repo to resolve these to exact lines and see which are collections."
             ),
             impact="If one of these is a collection that only grows, the heap fills until the JVM dies with OutOfMemoryError.",
@@ -1540,9 +1532,9 @@ def _build_static_field_findings(
 
     title = (
         f"Static collection `{lead['class_name'].rsplit('.', 1)[-1]}.{lead['field_name']}` "
-        "is a likely leak root"
+        "references objects; inspect its lifecycle"
         if len(shown) == 1 else
-        f"{len(shown)} static collection fields are likely leak roots"
+        f"{len(shown)} static collection fields need lifecycle review"
     )
 
     return [Finding(
@@ -1551,11 +1543,11 @@ def _build_static_field_findings(
         description=(
             f"Your code declares {len(shown)} `static` collection field"
             f"{'s' if len(shown) > 1 else ''} that currently hold live objects. "
-            "Static fields are GC roots — the objects they reference are never "
-            "collected for the life of the process. When such a collection is only "
-            "ever added to, it grows without bound until the heap is exhausted. "
+            "A field can retain objects while its declaring class is reachable. "
+            "Reassignment, cleanup and class unloading can release references. "
+            "The declaration alone does not establish unbounded growth. "
             + ("The histogram confirms the heap is full of collection entries, "
-               "which is exactly this pattern. " if container_dominated else "")
+               "but does not establish that these fields own those entries. " if container_dominated else "")
             + "The source location(s) below point to the exact declaration to review."
         ),
         impact=(

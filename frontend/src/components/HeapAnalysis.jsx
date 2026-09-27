@@ -1,4 +1,5 @@
 import Investigation from './Investigation'
+import HeapWorkbench from './HeapWorkbench'
 import RetentionTrace from './RetentionTrace'
 import { useState } from 'react'
 import Findings from './Findings'
@@ -24,11 +25,13 @@ export default function HeapAnalysis({ analysis, filename, sourceSession, onUpda
   return (
     <div className="max-w-7xl mx-auto pt-8 space-y-8">
       <VerdictBanner verdict={analysis.verdict} summary={analysis.summary} />
-      <Investigation analysis={analysis} sourceSession={sourceSession} onUpdate={onUpdate} />
+      <Investigation hideHeapExplorer analysis={analysis} sourceSession={sourceSession} onUpdate={onUpdate} />
       <Coverage analysis={analysis} />
       <CaseFile analysis={analysis} filename={filename} />
       <Stats analysis={analysis} />
       <ExportReport analysis={analysis} filename={filename} kind="heap" sourceSession={sourceSession} />
+
+      <HeapWorkbench key={analysis.analysis_id} analysis={analysis} sourceSession={sourceSession} />
 
       <Section label="// diagnostic findings" count={analysis.findings.length}>
         <Findings findings={analysis.findings} />
@@ -36,7 +39,7 @@ export default function HeapAnalysis({ analysis, filename, sourceSession, onUpda
 
       {analysis.dominators?.length > 0 && (
         <Section
-          label={`// dominator tree · top ${Math.min(TOP_N, analysis.dominators.length)} objects by retained size`}
+          label={`// top retained owners · top ${Math.min(TOP_N, analysis.dominators.length)} objects by retained size`}
           count={analysis.dominators.length}
         >
           <Dominators analysis={analysis} />
@@ -59,20 +62,6 @@ export default function HeapAnalysis({ analysis, filename, sourceSession, onUpda
       )}
 
       <LLMPanel analysis={analysis} kind="heap" sourceSession={sourceSession} />
-
-      <Section
-        label={`// histogram · top ${TOP_N} classes by shallow size`}
-        count={analysis.top_classes_by_size?.length}
-      >
-        <Histogram entries={analysis.top_classes_by_size} sortKey="shallow_size_bytes" />
-      </Section>
-
-      <Section
-        label={`// histogram · top ${TOP_N} classes by instance count`}
-        count={analysis.top_classes_by_count?.length}
-      >
-        <Histogram entries={analysis.top_classes_by_count} sortKey="instance_count" />
-      </Section>
 
       <Section label="// record types in this dump" count={Object.keys(analysis.record_type_counts || {}).length}>
         <RecordTypes counts={analysis.record_type_counts} />

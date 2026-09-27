@@ -346,6 +346,8 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
                 remaining = obj["length"] * width_bytes
                 digest = hashlib.sha256()
                 sample = b""
+                constant = None
+                is_constant = obj["length"] > 0
                 while remaining:
                     chunk = reader.read(min(1024 * 1024, remaining))
                     if not chunk:
@@ -353,6 +355,10 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
                     if len(sample) < 32 * width_bytes:
                         sample += chunk[: 32 * width_bytes - len(sample)]
                     digest.update(chunk)
+                    if constant is None:
+                        constant = chunk[:width_bytes]
+                    if is_constant and chunk != constant * (len(chunk) // width_bytes):
+                        is_constant = False
                     remaining -= len(chunk)
                 fmt = {
                     4: "B",
@@ -368,6 +374,8 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
                     json_primitive(v[0], ty)
                     for v in struct.iter_unpack(">" + fmt, sample)
                 ]
+                if is_constant:
+                    values["constant"] = values["sample"][0]
                 db.execute(
                     "INSERT INTO array_hashes VALUES(?,?,?)",
                     (obj["oid"], digest.hexdigest(), ty),
@@ -408,6 +416,11 @@ def object_detail(path, oid, offset=0, limit=100):
         out = dict(obj)
         out.pop("offset", None)
         out["values"] = json.loads(out.pop("values_json"))
+        out["display_value"] = display_value(db, out)
+        if db.execute("SELECT 1 FROM meta WHERE key='dominators_complete'").fetchone():
+            dom = db.execute("SELECT retained,parent FROM dom WHERE oid=?", (oid,)).fetchone()
+            if dom:
+                out.update(retained_bytes=dom["retained"], dominator=dom["parent"])
         for direction, column in [("outgoing", "src"), ("incoming", "dst")]:
             out[direction] = [
                 dict(r)
@@ -504,18 +517,68 @@ def root_paths(path, oid, max_nodes=10000, max_depth=40, include_weak=False, sou
         db.close()
 
 
-def search_objects(path, class_name="", offset=0, limit=50):
+def search_objects(path, class_name="", offset=0, limit=50, exact=False, loader=None):
     db = connect(path)
     try:
+        name = "COALESCE(c.name,CASE o.kind WHEN 'primitive:4' THEN 'boolean[]' WHEN 'primitive:5' THEN 'char[]' WHEN 'primitive:6' THEN 'float[]' WHEN 'primitive:7' THEN 'double[]' WHEN 'primitive:8' THEN 'byte[]' WHEN 'primitive:9' THEN 'short[]' WHEN 'primitive:10' THEN 'int[]' WHEN 'primitive:11' THEN 'long[]' ELSE o.kind END)"
         return [
             dict(r)
             for r in db.execute(
-                "SELECT o.oid,o.kind,o.shallow,o.length,c.name FROM objects o LEFT JOIN classes c ON o.class_id=c.cid WHERE c.name LIKE ? ORDER BY o.oid LIMIT ? OFFSET ?",
-                ("%" + class_name + "%", limit, offset),
+                f"SELECT o.oid,o.kind,o.shallow,o.length,{name} name,c.loader FROM objects o LEFT JOIN classes c ON o.class_id=c.cid WHERE ((? AND {name}=?) OR (NOT ? AND instr(lower({name}),lower(?))>0)) AND (? IS NULL OR c.loader=?) AND o.kind!='class' AND o.kind!='virtual' ORDER BY o.oid LIMIT ? OFFSET ?",
+                (exact, class_name, exact, class_name, loader, loader, limit, offset),
             )
         ]
     finally:
         db.close()
+
+
+def display_value(db, obj, depth=0):
+    """Bounded value resolvers; unsupported byte orders/layouts remain unavailable."""
+    if depth > 2:
+        return None
+    name = obj.get("name")
+    values = obj.get("values", {})
+    def field(suffix):
+        return next((v for k, v in values.items() if k.endswith('.' + suffix)), None)
+    def referenced(suffix):
+        row = db.execute("SELECT o.*,c.name FROM edges e JOIN objects o ON o.oid=e.dst LEFT JOIN classes c ON c.cid=o.class_id WHERE e.src=? AND e.field LIKE ? LIMIT 1", (obj['oid'], '%.' + suffix)).fetchone()
+        return dict(row, values=json.loads(row['values_json'])) if row else None
+    if name == 'java.lang.String':
+        backing = referenced('value')
+        if not backing:
+            return None
+        sample = backing['values'].get('sample', [])
+        offset = field('offset') or 0
+        count = field('count')
+        if offset < 0 or offset >= len(sample) and backing['length']:
+            return None
+        end = offset + count if count is not None else backing['length']
+        part = sample[offset:end]
+        if backing['kind'] == 'primitive:5':
+            text = b''.join(int(v).to_bytes(2, 'big') for v in part).decode('utf-16-be', 'replace')
+        elif backing['kind'] == 'primitive:8' and field('coder') == 0:
+            text = bytes(int(v) & 255 for v in part).decode('latin1')
+        else:
+            return None
+        return {'text': text, 'partial': end > len(sample), 'resolver': 'String backing-array preview'}
+    if name == 'java.math.BigInteger':
+        mag = referenced('mag')
+        if not mag or mag['kind'] != 'primitive:10' or mag['length'] > 32 or field('signum') not in (-1, 0, 1):
+            return None
+        n = 0
+        for word in mag['values'].get('sample', []):
+            n = (n << 32) | (int(word) & 0xffffffff)
+        return {'text': str(n * field('signum')), 'partial': False, 'resolver': 'BigInteger'}
+    if name == 'java.math.BigDecimal':
+        compact = field('intCompact')
+        scale = field('scale')
+        if compact is None or str(compact) == str(-(2**63)):
+            target = referenced('intVal')
+            resolved = display_value(db, target, depth + 1) if target else None
+            compact = resolved['text'] if resolved else None
+        if compact is not None and scale is not None:
+            return {'text': f'{compact} × 10^({-int(scale)})', 'partial': False, 'resolver': 'BigDecimal exact coefficient and scale'}
+    return None
 
 
 def heap_threads(path):
@@ -567,6 +630,7 @@ def retained(path, top_n=25):
     try:
         db.executescript("""
         DROP TABLE IF EXISTS dom;
+        DELETE FROM meta WHERE key='dominators_complete';
         CREATE TABLE dom(oid TEXT PRIMARY KEY, rank INTEGER, parent TEXT, retained INTEGER);
         CREATE TEMP TABLE work(seq INTEGER PRIMARY KEY AUTOINCREMENT, oid TEXT, leaving INTEGER);
         """)
@@ -647,6 +711,8 @@ def retained(path, top_n=25):
             db.execute(
                 "UPDATE dom SET retained=retained+? WHERE oid=?", (size, row["parent"])
             )
+        db.execute("CREATE INDEX IF NOT EXISTS dom_parent ON dom(parent)")
+        db.execute("INSERT OR REPLACE INTO meta VALUES('dominators_complete','1')")
         db.commit()
         reachable = db.execute("SELECT retained FROM dom WHERE oid='0x0'").fetchone()[0]
         unreachable = db.execute(

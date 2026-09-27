@@ -301,6 +301,27 @@ class SourceIndex:
             result["related_methods_omitted"] = max(0, len(related)-8)
         return result
 
+    def field_investigation(self, class_name, field_name):
+        """Declared-field operations in the same class, never an allocation proof."""
+        field = self.find_field(class_name, field_name)
+        resolved = self.lookup(class_name)
+        if not field or not resolved:
+            return {"status": "unresolved", "operations": [], "limitations": ["Field declaration is absent, ambiguous, or source content changed."]}
+        path = resolved[0]
+        symbols = self._symbols[path]
+        operations = [dict(op, repo_path=self.relative_path(path),
+                           snippet=self._read_snippet(path, op["line"], 3).model_dump())
+                      for op in symbols.get("field_operations", [])
+                      if op["owner"] == class_name and op["field"] == field_name]
+        return {"status": "partial" if symbols.get("parser") == "javac" else "unavailable",
+                "declaration": {**field, "snippet": field["snippet"].model_dump()},
+                "operations": operations[:100], "omitted": max(0, len(operations) - 100),
+                "write_count": sum(op["category"] == "candidate_write" for op in operations),
+                "cleanup_count": sum(op["category"] == "candidate_cleanup" for op in operations),
+                "limitations": ["Same-class declared receivers only; aliases, inherited/external writes, reflection and runtime dispatch are not resolved.",
+                                "Operation names describe candidate behavior; execution, cleanup coverage and the allocation site are not established.",
+                                "Bare names shadowed anywhere in a method are conservatively excluded. A JDK compiler is required."]}
+
     def _infer_fqcn(self, path: Path, ext: str) -> Optional[str]:
         """Read the file's package declaration and combine with its filename to form an FQCN."""
         spec = LANG_SPECS[ext]

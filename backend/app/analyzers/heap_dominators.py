@@ -41,7 +41,15 @@ def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
         r = retained(path, top_n)
         entries = [DominatorEntry(**e) for e in r["entries"]]
         findings = []
-        for e in entries[:3]:
+        try:
+            threshold = min(100, max(0, float(os.environ.get("HEAP_SUSPECT_PERCENT", "10"))))
+            min_bytes = max(0, int(os.environ.get("HEAP_SUSPECT_MIN_BYTES", str(1 << 20))))
+        except ValueError:
+            threshold, min_bytes = 10, 1 << 20
+        for position, e in enumerate(entries):
+            is_suspect = e.retained_bytes >= max(min_bytes, r["reachable_bytes"] * threshold / 100)
+            if position >= 3 and not is_suspect:
+                continue
             e.root_paths = root_paths(
                 path, e.accumulation_object_id or e.object_id, max_nodes=5000, source=source
             )
@@ -62,7 +70,7 @@ def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
                             seen.add(key)
                             locations.append(SourceLocation(**loc))
 
-            if e.retained_bytes < max(1 << 20, r["reachable_bytes"] * 0.2):
+            if not is_suspect:
                 continue
             findings.append(
                 Finding(

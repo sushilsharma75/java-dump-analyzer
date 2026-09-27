@@ -286,6 +286,8 @@ class SkippedAnalysis(BaseModel):
 
 class HeapDumpAnalysis(BaseModel):
     analysis_id: str = ""
+    engine: str = "native"
+    input_format: Dict[str, Any] = Field(default_factory=lambda: {"format": "hprof", "compression": None})
     capture: CaptureMetadata = Field(default_factory=CaptureMetadata)
     stages: List[AnalysisStage] = Field(default_factory=list)
     histogram: List[ClassHistogramEntry] = Field(default_factory=list)

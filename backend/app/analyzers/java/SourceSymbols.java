@@ -29,7 +29,7 @@ public class SourceSymbols {
             Iterable<? extends CompilationUnitTree> units=task.parse();
             SourcePositions positions=Trees.instance(task).getSourcePositions();
             for(CompilationUnitTree unit:units) {
-                List<String> types=new ArrayList<>(), methods=new ArrayList<>(), fields=new ArrayList<>();
+                List<String> types=new ArrayList<>(), methods=new ArrayList<>(), fields=new ArrayList<>(), operations=new ArrayList<>();
                 String pkg=unit.getPackageName()==null?"":unit.getPackageName().toString();
                 new TreePathScanner<Void,Void>() {
                     Deque<String> owners=new ArrayDeque<>();
@@ -45,6 +45,52 @@ public class SourceSymbols {
                     }
                     public Void visitMethod(MethodTree t,Void v) {
                         if(!owners.isEmpty()) methods.add("{\"name\":"+q(t.getName().toString())+",\"owner\":"+q(owners.peek())+",\"start\":"+start(t)+",\"end\":"+end(t)+",\"line\":"+line(start(t))+",\"end_line\":"+line(end(t))+"}");
+                        Tree parent=getCurrentPath().getParentPath().getLeaf();
+                        if (parent instanceof ClassTree && !owners.isEmpty()) {
+                            String owner=owners.peek();
+                            Map<String,Boolean> declared=new HashMap<>();
+                            for(Tree member:((ClassTree)parent).getMembers()) if(member instanceof VariableTree) {
+                                VariableTree field=(VariableTree)member;
+                                declared.put(field.getName().toString(),field.getModifiers().getFlags().contains(javax.lang.model.element.Modifier.STATIC));
+                            }
+                            Set<String> locals=new HashSet<>();
+                            new TreeScanner<Void,Void>() {
+                                public Void visitVariable(VariableTree x,Void a){locals.add(x.getName().toString());return super.visitVariable(x,a);}
+                            }.scan(t,null);
+                            new TreeScanner<Void,Void>() {
+                                public Void visitClass(ClassTree x,Void a){return null;}
+                                String field(ExpressionTree e) {
+                                    if(e instanceof IdentifierTree) {
+                                        String n=e.toString();return declared.containsKey(n)&&!locals.contains(n)?n:null;
+                                    }
+                                    if(e instanceof MemberSelectTree) {
+                                        MemberSelectTree s=(MemberSelectTree)e;
+                                        String n=s.getIdentifier().toString(),receiver=s.getExpression().toString();
+                                        if(declared.containsKey(n) && receiver.equals("this")) return n;
+                                        String simple=((ClassTree)parent).getSimpleName().toString();
+                                        if(Boolean.TRUE.equals(declared.get(n)) && receiver.equals(simple) && !locals.contains(simple)) return n;
+                                    }
+                                    return null;
+                                }
+                                void emit(Tree x,String f,String op,String category) {
+                                    if(f==null) return;
+                                    operations.add("{\"owner\":"+q(owner)+",\"field\":"+q(f)+",\"method\":"+q(t.getName().toString())+",\"line\":"+line(start(x))+",\"operation\":"+q(op)+",\"category\":"+q(category)+",\"binding\":\"declared field; conservative AST receiver\"}");
+                                }
+                                public Void visitMethodInvocation(MethodInvocationTree x,Void a) {
+                                    if(x.getMethodSelect() instanceof MemberSelectTree) {
+                                        MemberSelectTree s=(MemberSelectTree)x.getMethodSelect();
+                                        String op=s.getIdentifier().toString();
+                                        String category=Set.of("put","putAll","putIfAbsent","add","addAll","offer","push","set","compute","computeIfAbsent","merge","register","addListener").contains(op)?"candidate_write":Set.of("remove","removeAll","removeIf","clear","poll","pop","invalidate","invalidateAll","cleanUp","unregister","removeListener").contains(op)?"candidate_cleanup":"other_usage";
+                                        emit(x,field(s.getExpression()),op,category);
+                                    }
+                                    return super.visitMethodInvocation(x,a);
+                                }
+                                public Void visitAssignment(AssignmentTree x,Void a) {
+                                    emit(x,field(x.getVariable()),"assignment",x.getExpression().getKind()==Tree.Kind.NULL_LITERAL?"candidate_cleanup":"candidate_write");
+                                    return super.visitAssignment(x,a);
+                                }
+                            }.scan(t.getBody(),null);
+                        }
                         return super.visitMethod(t,v);
                     }
                     public Void visitVariable(VariableTree t,Void v) {
@@ -54,7 +100,7 @@ public class SourceSymbols {
                     }
                 }.scan(unit,null);
                 boolean valid=diagnostics.getDiagnostics().stream().noneMatch(d->d.getKind()==Diagnostic.Kind.ERROR && d.getSource()!=null && d.getSource().toUri().equals(unit.getSourceFile().toUri()));
-                System.out.println("{\"path\":"+q(Path.of(unit.getSourceFile().toUri()).toString())+",\"valid\":"+valid+",\"types\":["+String.join(",",types)+"],\"methods\":["+String.join(",",methods)+"],\"fields\":["+String.join(",",fields)+"]}");
+                System.out.println("{\"path\":"+q(Path.of(unit.getSourceFile().toUri()).toString())+",\"valid\":"+valid+",\"types\":["+String.join(",",types)+"],\"methods\":["+String.join(",",methods)+"],\"fields\":["+String.join(",",fields)+"],\"field_operations\":["+String.join(",",operations)+"]}");
             }
         }
     }

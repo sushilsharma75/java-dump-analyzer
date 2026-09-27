@@ -71,8 +71,8 @@ export default function Hero({
           tag="02"
           title="Heap Dump"
           subtitle="jmap -dump · jcmd GC.heap_dump"
-          formats=".hprof"
-          accept=".hprof,application/octet-stream"
+          formats=".hprof, .hprof.gz"
+          accept=".hprof,.gz,application/octet-stream,application/gzip"
           onFile={(f, deep) => onHeapUpload(f, false, deep)}
           deepOption
           quickOption
@@ -249,7 +249,7 @@ function DeepToggle({ deep, onChange, disabled }) {
   return (
     <label className="mt-3 flex items-start justify-center gap-2 text-[11px] text-bone-400 text-left">
       <input type="checkbox" className="mt-0.5" checked={deep} disabled={disabled} onChange={e => onChange(e.target.checked)} />
-      <span>Deep retention analysis for dumps over 2 GB — traces what holds the top consumer back to source. Adds extra passes over the file.</span>
+      <span>Deep retention analysis for dumps over 2 GB — traces the top consumer back to source and scans duplicate arrays. Adds extra passes. Object-index and dominator limits still apply.</span>
     </label>
   )
 }

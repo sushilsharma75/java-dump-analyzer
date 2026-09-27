@@ -21,6 +21,16 @@ const { buildReportHTML } = require('../src/report.js')
 const Investigation = require('../src/components/Investigation.jsx').default
 const VerdictBanner = require('../src/components/VerdictBanner.jsx').default
 const Findings = require('../src/components/Findings.jsx').default
+const { HeapThreads } = require('../src/components/HeapWorkbench.jsx')
+
+test('heap thread roots render recorded local object addresses', () => {
+  const html = renderToString(React.createElement(HeapThreads, {
+    threads: [{ thread_serial: 4, frames: [], locals: [{ frame: 2, kind: '0x3', oid: '0x123' }] }],
+    onInspect: () => {},
+  }))
+  assert.ok(html.includes('0x123'))
+  assert.ok(html.replace(/<!--.*?-->/g, '').includes('Frame 2'))
+})
 
 const analysis = {
   analysis_id: 'a'.repeat(32), object_index_id: 'a'.repeat(32), verdict: 'insufficient_evidence',

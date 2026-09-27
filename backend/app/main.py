@@ -41,6 +41,7 @@ from .schemas import (
 )
 from .analyzers.diagnostics import analyze as analyze_thread_dump
 from .analyzers.heap_dump import parse_heap_dump
+from .analyzers.heap_input import native_input
 from .analyzers.gc_log import parse_gc_log
 from .analyzers.correlate import correlate as correlate_dumps
 from .analyzers.compare import compare_heaps, compare_threads
@@ -204,9 +205,11 @@ async def analyze_heap_sync(
         identifier = uuid.uuid4().hex
         source = _resolve_source(source_session)
         def run():
-            with open(tmp.name, "rb") as fp:
-                return parse_heap_dump(fp, max_bytes=256*1024*1024 if quick else None, deep=deep,
+            with native_input(tmp.name, MAX_SYNC_HEAP_DUMP_BYTES, TMP_DIR) as (fp, input_format):
+                result = parse_heap_dump(fp, max_bytes=256*1024*1024 if quick else None, deep=deep,
                                        source=source, index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
+                result.input_format = input_format
+                return result
         result = await asyncio.to_thread(run)
         result.analysis_id = identifier
         if any(x.stage == "object index" and x.status == "completed" for x in result.stages):
@@ -315,11 +318,13 @@ async def _run_heap_parse(
         cb = JOBS.progress_callback(job_id)
         src_index = _resolve_source(source_session)
         def _do_parse():
-            with open(path, "rb") as fp:
+            with native_input(path, MAX_HEAP_DUMP_BYTES, TMP_DIR, JOBS.stage_callback(job_id)) as (fp, input_format):
                 max_bytes = 256 * 1024 * 1024 if quick else None
-                return parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index, deep=deep,
+                result = parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index, deep=deep,
                                        stage_callback=JOBS.stage_callback(job_id),
                                        index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
+                result.input_format = input_format
+                return result
         result = await asyncio.to_thread(_do_parse)
         result.analysis_id = identifier
         if any(x.stage == "object index" and x.status == "completed" for x in result.stages):
@@ -734,9 +739,19 @@ def source_context(session: str, class_name: str, method: Optional[str] = None, 
     return _resolve_source(session).context(class_name, method, line)
 
 
+@app.get("/api/source/{session}/references")
+def source_references(session: str, class_name: str):
+    return _resolve_source(session).find_references(class_name, max_results=100)
+
+
+@app.get("/api/source/{session}/field")
+def source_field(session: str, class_name: str, field: str):
+    return _resolve_source(session).field_investigation(class_name, field)
+
+
 @app.get("/api/heap/{identifier}/objects")
-def heap_objects(identifier: str, class_name: str = "", offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)):
-    return heap_index.search_objects(_index(identifier), class_name, offset, limit)
+def heap_objects(identifier: str, class_name: str = "", offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200), exact: bool = False, loader: Optional[str] = None):
+    return heap_index.search_objects(_index(identifier), class_name, offset, limit, exact, loader)
 
 
 @app.get("/api/heap/{identifier}/objects/{oid}")
@@ -768,3 +783,5 @@ from .database import router as database_router
 app.include_router(database_router)
 from .server_logs import router as server_logs_router
 app.include_router(server_logs_router)
+from .heap_workbench import router as heap_workbench_router
+app.include_router(heap_workbench_router)

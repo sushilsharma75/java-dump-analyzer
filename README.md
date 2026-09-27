@@ -14,6 +14,25 @@ and source references, and exposes incomplete analysis instead of calling it hea
 
 ## Start locally
 
+### Native heap investigation
+
+Heap analysis runs in this application's Python/SQLite engine. No Eclipse MAT
+installation or DTFJ plugin is required. Upload HPROF or gzip-compressed HPROF,
+then use the heap workbench to search the full histogram, navigate dominator
+children, calculate selected-object retained sets, inspect root paths, and review
+memory-waste candidates. Notes and object bookmarks are saved with the analysis.
+
+Attaching matching Java source adds retaining-field declarations and candidate
+write/cleanup methods. These are source evidence, not proof of the historical
+allocation or insertion call. Attached server logs also participate in incident
+correlation.
+
+Reanalyse older dumps to generate the new dominator completion metadata and
+constant-array information. OpenJ9 PHD/system-dump readers and general OQL are
+not implemented yet. See the [feature review and implementation status](docs/MAT_FEATURE_REVIEW.md).
+
+### Prerequisites
+
 Use 64-bit Python 3.13 and Node.js 22.
 
 ### Linux / macOS
@@ -372,6 +391,8 @@ cleaning up its transient job record.
 | `HEAP_INDEX_MAX_BYTES` | `536870912` | Automatic persistent object-index size ceiling; `0` disables it |
 | `HEAP_INDEX_MAX_OBJECTS` | `1000000` | Automatic index object-count ceiling |
 | `HEAP_DOMINATOR` | `1` | `0` disables dominator computation |
+| `HEAP_SUSPECT_PERCENT` | `10` | Retained-memory percentage threshold for automatic suspect findings |
+| `HEAP_SUSPECT_MIN_BYTES` | `1048576` | Minimum retained bytes for automatic suspect findings |
 | `HEAP_DOMINATOR_MAX_BYTES` | `536870912` | Retained-size analysis ceiling in bytes, also enforced with a persistent index |
 | `HEAP_DOMINATOR_MAX_OBJECTS` | `1000000` | Retained-size analysis object-count ceiling, including temporary indexes |
 | `HEAP_GRAPH_TRACE` | `1` | Bounded heuristic retention tracer |

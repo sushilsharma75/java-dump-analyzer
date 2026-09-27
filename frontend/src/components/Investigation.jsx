@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import RetentionTrace from './RetentionTrace'
+import SourceSnippet from './SourceSnippet'
 
 async function request(path, options) {
   const r = await fetch(path, options)
@@ -9,7 +10,7 @@ async function request(path, options) {
 }
 const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
-export default function Investigation({ analysis, sourceSession, onUpdate }) {
+export default function Investigation({ analysis, sourceSession, onUpdate, hideHeapExplorer = false }) {
   const [capture, setCapture] = useState(analysis.capture || {})
   const [query, setQuery] = useState('')
   const [objects, setObjects] = useState([])
@@ -42,14 +43,17 @@ export default function Investigation({ analysis, sourceSession, onUpdate }) {
         </label>)}
         <button disabled={busy || !analysis.analysis_id} className="btn-secondary" onClick={() => act(async () => onUpdate?.(await request(`/api/analyses/${analysis.analysis_id}/capture`, post(capture))))}>Save capture identity</button>
         {sourceSession && <button disabled={busy} className="btn-secondary" onClick={() => act(async () => onUpdate?.(await request(`/api/analyses/${analysis.analysis_id}/source/${sourceSession.session_id}`, post({}))))}>Refresh source locations</button>}
-        <pre className="overflow-x-auto text-xs">{JSON.stringify(analysis.source_provenance, null, 2)}</pre>
+        <p>Source build: {analysis.source_provenance?.build_verified ? 'matched' : 'unverified'} · {analysis.source_provenance?.resolution || 'No source attached'}</p>
+        {(analysis.source_provenance?.limitations || []).map((note, i) => <p key={i}>{note}</p>)}
       </div>
     </details>
     <details><summary>Analysis coverage and assumptions</summary>
-      <pre className="overflow-x-auto text-xs p-3">{JSON.stringify({ parsing: analysis.parse_coverage, stages: analysis.stages, sizing: analysis.sizing_assumptions }, null, 2)}</pre>
+      <div className="heap-table-scroll"><table className="heap-table"><thead><tr><th>Stage</th><th>Status</th><th>Reason</th></tr></thead><tbody>{(analysis.stages || []).map((stage, i) => <tr key={i}><td>{stage.stage}</td><td>{stage.status}</td><td>{stage.reason || '—'}</td></tr>)}</tbody></table></div>
+      <ul>{(analysis.sizing_assumptions || []).map((note, i) => <li key={i}>{note}</li>)}</ul>
+      {analysis.parse_coverage && <p>Parsing status: {analysis.parse_coverage.status || 'See complete analysis JSON for parser counters.'}</p>}
     </details>
     <a className="btn-secondary" href={`/api/analyses/${analysis.analysis_id}`} download>Download complete analysis JSON</a>
-    {id && <details><summary>Explore heap objects and GC roots</summary>
+    {id && !hideHeapExplorer && <details><summary>Explore heap objects and GC roots</summary>
       <div className="space-y-3 p-3">
         <form onSubmit={e => { e.preventDefault(); search(0) }} className="flex gap-2">
           <input aria-label="Class name filter" className="bg-ink-950 border rounded p-2" placeholder="Class name" value={query} onChange={e => setQuery(e.target.value)} />
@@ -93,6 +97,6 @@ function SourceContext({ analysis, sourceSession }) {
       catch (e) { setError(e.message) }
     }}>{l.evidence_id} · {l.repo_path || l.class_name}:{l.line} · {l.role || 'candidate'}</button>)}
     {error && <p role="alert">{error}</p>}
-    {result && <pre className="overflow-x-auto text-xs">{JSON.stringify(result, null, 2)}</pre>}
+    {result && <div><p>Resolution: {result.resolution} · build {result.build_verified ? 'matched' : 'unverified'}</p><SourceSnippet location={{ repo_path: result.repo_path, snippet: result.method || result.snippet, is_user_code: true, build_verified: result.build_verified, role: 'source method context' }} />{(result.related_field_methods || []).map((m, i) => <SourceSnippet key={i} location={{ repo_path: result.repo_path, method: m.method, snippet: m, is_user_code: true, role: m.role }} />)}</div>}
   </div>
 }

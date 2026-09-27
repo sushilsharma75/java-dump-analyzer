@@ -1,4 +1,5 @@
 import SourceSnippet from './SourceSnippet'
+import SourceFieldInvestigation from './SourceFieldInvestigation'
 
 function TraceSource({ location }) {
   if (!location) return null
@@ -6,6 +7,7 @@ function TraceSource({ location }) {
   const methods = context?.related_field_methods || []
   return <div>
     <SourceSnippet location={location} />
+    <SourceFieldInvestigation data={location.field_investigation} buildVerified={location.build_verified} />
     {context?.method && <details><summary>Recorded method context</summary>
       <SourceSnippet location={{ ...location, snippet: context.method }} />
       {context.method.truncated && <p>Method context truncated.</p>}

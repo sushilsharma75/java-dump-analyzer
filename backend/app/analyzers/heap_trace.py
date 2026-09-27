@@ -46,6 +46,8 @@ def enrich_root_paths(path, data, source=None, build_verified=False):
                     loc['snippet'] = loc['snippet'].model_dump()
                 loc['context'] = source.context(cls, method, loc['line'])
                 loc['context']['build_verified'] = build_verified
+                if field:
+                    loc['field_investigation'] = source.field_investigation(cls, field)
         locations[key] = loc
         return loc
 
