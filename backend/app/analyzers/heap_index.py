@@ -23,6 +23,10 @@ def hx(n):
 
 def connect(path):
     db = sqlite3.connect(str(path), timeout=60)
+    from .heap_control import cancel_requested
+    cancelled = cancel_requested.get()
+    if cancelled:
+        db.set_progress_handler(lambda: int(cancelled()), 1000)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA temp_store=FILE")
     db.execute("PRAGMA cache_size=-16384")
@@ -62,11 +66,23 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
         model = model or size_model(width, file_size)
         rid = lambda: reader.id(width)
 
+        pending_edges = []
+        pending_values = []
+        pending_hashes = []
+
+        def flush():
+            db.executemany("INSERT INTO edges VALUES(?,?,?,?)", pending_edges)
+            pending_edges.clear()
+            db.executemany("UPDATE objects SET shallow=?, values_json=? WHERE oid=?", pending_values)
+            pending_values.clear()
+            db.executemany("INSERT INTO array_hashes VALUES(?,?,?)", pending_hashes)
+            pending_hashes.clear()
+
         def edge(a, b, field, strength="strong"):
             if b:
-                db.execute(
-                    "INSERT INTO edges VALUES(?,?,?,?)", (hx(a), hx(b), field, strength)
-                )
+                pending_edges.append((hx(a), hx(b), field, strength))
+                if len(pending_edges) >= 8192:
+                    flush()
 
         def value(ty):
             if ty == 2:
@@ -247,6 +263,7 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
                         )
                     subrecords += 1
                     if subrecords % 10000 == 0:
+                        flush()
                         db.commit()
                         stage(f"Indexing object records: {subrecords:,}")
                     if reader.pos > end:
@@ -258,6 +275,7 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
             records += 1
             if records % 1000 == 0:
                 db.commit()
+        flush()
         db.execute(
             "UPDATE classes SET name=COALESCE((SELECT value FROM strings WHERE id=(SELECT value FROM meta WHERE key='name:'||classes.cid)),cid)"
         )
@@ -333,10 +351,7 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
                 shallow = model.instance_size(
                     obj["length"], sum(ty == 2 for _, ty, _ in fields), width
                 )
-                db.execute(
-                    "UPDATE objects SET shallow=?, values_json=? WHERE oid=?",
-                    (shallow, json.dumps(values), obj["oid"]),
-                )
+                pending_values.append((shallow, json.dumps(values), obj["oid"]))
             elif obj["kind"] == "object_array":
                 for i in range(obj["length"]):
                     edge(oid, rid(), f"[{i}]")
@@ -376,20 +391,16 @@ def build_index(fp, path, progress=None, model=None, stage_callback=None):
                 ]
                 if is_constant:
                     values["constant"] = values["sample"][0]
-                db.execute(
-                    "INSERT INTO array_hashes VALUES(?,?,?)",
-                    (obj["oid"], digest.hexdigest(), ty),
-                )
-                db.execute(
-                    "UPDATE objects SET values_json=? WHERE oid=?",
-                    (json.dumps(values), obj["oid"]),
-                )
+                pending_hashes.append((obj["oid"], digest.hexdigest(), ty))
+                pending_values.append((obj["shallow"], json.dumps(values), obj["oid"]))
             count += 1
             if count % 5000 == 0:
+                flush()
                 db.commit()
                 stage(f"Decoding object references: {count:,}")
                 if progress:
                     progress(count)
+        flush()
         stage("Building reference lookup indexes")
         db.executescript(
             "CREATE INDEX outgoing ON edges(src); CREATE INDEX incoming ON edges(dst); CREATE INDEX root_oid ON roots(oid); CREATE INDEX object_class ON objects(class_id);"
@@ -619,20 +630,14 @@ def heap_threads(path):
         db.close()
 
 
-def retained(path, top_n=25):
-    """Disk-backed immediate dominators (iterative reverse-postorder algorithm).
-
-    The graph and traversal stack live in SQLite. Convergence time depends on
-    graph shape; this favors bounded RAM over the in-memory algorithm's speed.
-    Retained bytes are exact for this graph and the explicitly assumed layout.
-    """
+def retained(path, top_n=25, stage_callback=None):
+    """Exact retained sizes using a compact, memory-mapped dominator graph."""
     db = connect(path)
     try:
         db.executescript("""
         DROP TABLE IF EXISTS dom;
         DELETE FROM meta WHERE key='dominators_complete';
         CREATE TABLE dom(oid TEXT PRIMARY KEY, rank INTEGER, parent TEXT, retained INTEGER);
-        CREATE TEMP TABLE work(seq INTEGER PRIMARY KEY AUTOINCREMENT, oid TEXT, leaving INTEGER);
         """)
         db.execute(
             "INSERT OR IGNORE INTO objects VALUES('0x0','0x0','virtual',0,0,0,'{}')"
@@ -641,76 +646,10 @@ def retained(path, top_n=25):
         db.execute(
             "INSERT INTO edges SELECT DISTINCT '0x0',r.oid,'<root>','strong' FROM roots r JOIN objects o ON o.oid=r.oid"
         )
-        db.execute("INSERT INTO work(oid,leaving) VALUES('0x0',0)")
-        post = 0
-        while True:
-            w = db.execute("SELECT * FROM work ORDER BY seq DESC LIMIT 1").fetchone()
-            if not w:
-                break
-            db.execute("DELETE FROM work WHERE seq=?", (w["seq"],))
-            if w["leaving"]:
-                db.execute("UPDATE dom SET rank=? WHERE oid=?", (post, w["oid"]))
-                post += 1
-                continue
-            if db.execute("SELECT 1 FROM dom WHERE oid=?", (w["oid"],)).fetchone():
-                continue
-            db.execute("INSERT INTO dom VALUES(?,NULL,NULL,0)", (w["oid"],))
-            db.execute("INSERT INTO work(oid,leaving) VALUES(?,1)", (w["oid"],))
-            db.execute(
-                "INSERT INTO work(oid,leaving) SELECT DISTINCT e.dst,0 FROM edges e JOIN objects o ON o.oid=e.dst LEFT JOIN dom d ON d.oid=e.dst WHERE e.src=? AND e.strength='strong' AND d.oid IS NULL",
-                (w["oid"],),
-            )
-        db.execute("UPDATE dom SET rank=?-rank", (post - 1,))
+        from pathlib import Path
+        from .heap_compact import compute_dominators
+        compute_dominators(db, Path(path).parent, stage_callback=stage_callback)
         db.execute("CREATE INDEX IF NOT EXISTS dom_rank ON dom(rank)")
-        db.execute("UPDATE dom SET parent='0x0' WHERE oid='0x0'")
-
-        def intersect(a, b):
-            while a != b:
-                ra = db.execute(
-                    "SELECT rank,parent FROM dom WHERE oid=?", (a,)
-                ).fetchone()
-                rb = db.execute(
-                    "SELECT rank,parent FROM dom WHERE oid=?", (b,)
-                ).fetchone()
-                if ra["rank"] > rb["rank"]:
-                    a = ra["parent"]
-                else:
-                    b = rb["parent"]
-            return a
-
-        changed = True
-        iterations = 0
-        while changed:
-            changed = False
-            iterations += 1
-            for node in db.execute(
-                "SELECT oid,parent FROM dom WHERE rank>0 ORDER BY rank"
-            ):
-                parent = None
-                for pred in db.execute(
-                    "SELECT DISTINCT e.src FROM edges e JOIN dom d ON d.oid=e.src WHERE e.dst=? AND e.strength='strong' AND d.parent IS NOT NULL",
-                    (node["oid"],),
-                ):
-                    parent = pred[0] if parent is None else intersect(parent, pred[0])
-                if parent and parent != node["parent"]:
-                    db.execute(
-                        "UPDATE dom SET parent=? WHERE oid=?", (parent, node["oid"])
-                    )
-                    changed = True
-            db.commit()
-        db.execute(
-            "UPDATE dom SET retained=(SELECT shallow FROM objects WHERE objects.oid=dom.oid)"
-        )
-        for row in db.execute(
-            "SELECT oid,parent,retained FROM dom WHERE rank>0 ORDER BY rank DESC"
-        ):
-            # Fetch the accumulated value again (SQLite cursors may prefetch).
-            size = db.execute(
-                "SELECT retained FROM dom WHERE oid=?", (row["oid"],)
-            ).fetchone()[0]
-            db.execute(
-                "UPDATE dom SET retained=retained+? WHERE oid=?", (size, row["parent"])
-            )
         db.execute("CREATE INDEX IF NOT EXISTS dom_parent ON dom(parent)")
         db.execute("INSERT OR REPLACE INTO meta VALUES('dominators_complete','1')")
         db.commit()
@@ -780,7 +719,8 @@ def retained(path, top_n=25):
             reachable_bytes=reachable,
             unreachable_count=unreachable[0],
             unreachable_bytes=unreachable[1],
-            iterations=iterations,
+            iterations=1,
+            algorithm="lengauer-tarjan",
         )
     finally:
         db.close()

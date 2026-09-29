@@ -244,12 +244,12 @@ function UploadCard({
   )
 }
 
-/** Retention tracing and the duplicate scan stream the dump with bounded RAM; above 2 GB they only cost time. */
+/** Optional extra scans; sampled ownership tracing runs automatically. */
 function DeepToggle({ deep, onChange, disabled }) {
   return (
     <label className="mt-3 flex items-start justify-center gap-2 text-[11px] text-bone-400 text-left">
       <input type="checkbox" className="mt-0.5" checked={deep} disabled={disabled} onChange={e => onChange(e.target.checked)} />
-      <span>Deep retention analysis for dumps over 2 GB — traces the top consumer back to source and scans duplicate arrays. Adds extra passes. Object-index and dominator limits still apply.</span>
+      <span>Extended scans — allows duplicate-array scans over 2 GB and overrides a configured retention-tracing size ceiling. Ownership tracing runs automatically by default. Adds extra passes; object-index and dominator limits still apply.</span>
     </label>
   )
 }

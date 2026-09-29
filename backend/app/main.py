@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from .heap_jobs import HeapRun, HeapCancelled, ScanStream, saved_job, public_job
+from .analyzers.heap_control import cancel_requested
 from pydantic import BaseModel
 import httpx
 
@@ -312,31 +315,36 @@ async def _run_heap_parse(
     source_session: Optional[str] = None,
     deep: bool = False,
 ) -> None:
-    """Background task: parse the file, report progress, store result."""
+    """Publish the histogram before optional work, then checkpoint each stage."""
+    run = HeapRun(job_id, uuid.uuid4().hex)
     try:
-        identifier = uuid.uuid4().hex
         cb = JOBS.progress_callback(job_id)
         src_index = _resolve_source(source_session)
         def _do_parse():
-            with native_input(path, MAX_HEAP_DUMP_BYTES, TMP_DIR, JOBS.stage_callback(job_id)) as (fp, input_format):
-                max_bytes = 256 * 1024 * 1024 if quick else None
-                result = parse_heap_dump(fp, max_bytes=max_bytes, progress_callback=cb, source=src_index, deep=deep,
-                                       stage_callback=JOBS.stage_callback(job_id),
-                                       index_path=artifacts.path_for(identifier, ".sqlite") if not quick else None)
-                result.input_format = input_format
-                return result
-        result = await asyncio.to_thread(_do_parse)
-        result.analysis_id = identifier
-        if any(x.stage == "object index" and x.status == "completed" for x in result.stages):
-            result.object_index_id = identifier
-        JOBS.stage_callback(job_id)("Saving report")
-        artifacts.save(result, "heap")
-        JOBS.mark_done(job_id, result.model_dump())
+            token = cancel_requested.set(run.cancelled.is_set)
+            try:
+                with native_input(path, MAX_HEAP_DUMP_BYTES, TMP_DIR, run.stage, run.check) as (fp, input_format):
+                    run.input_format = input_format
+                    JOBS.update(job_id, bytes_total=os.fstat(fp.fileno()).st_size)
+                    result = parse_heap_dump(ScanStream(fp, run),
+                        max_bytes=256 * 1024 * 1024 if quick else None,
+                        progress_callback=cb, source=src_index, deep=deep,
+                        stage_callback=run.stage, report_callback=run.publish,
+                        index_path=artifacts.path_for(run.identifier, ".sqlite") if not quick else None)
+                    run.publish(result)
+                run.check()
+            finally:
+                cancel_requested.reset(token)
+        await asyncio.to_thread(_do_parse)
+        run.finish('done')
         log.info("Heap parse complete: job=%s", job_id)
+    except HeapCancelled:
+        run.finish('cancelled')
     except Exception as e:
         log.exception("Heap parse failed: job=%s", job_id)
-        JOBS.mark_error(job_id, str(e))
+        run.finish('error', str(e))
     finally:
+        JOBS.clear_cancel(job_id)
         if delete_after:
             try:
                 path.unlink(missing_ok=True)
@@ -345,18 +353,53 @@ async def _run_heap_parse(
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatus)
-def get_job(job_id: str):
-    job = JOBS.get(job_id)
+def get_job(job_id: str, include_result: bool = True):
+    job = JOBS.get(job_id) or saved_job(job_id)
     if not job:
         raise HTTPException(404, f"Job not found: {job_id}")
-    if job["status"] != "done":
-        job = {**job, "result": None}
+    if include_result and job.get('analysis_id'):
+        try:
+            job['result'] = _artifact(job['analysis_id'])['analysis']
+        except HTTPException:
+            job['result'] = None
+    elif not include_result:
+        job['result'] = None
     job.pop("tempfile", None)
     return JobStatus(**job)
 
 
+@app.get("/api/jobs/{job_id}/events")
+async def job_events(job_id: str):
+    get_job(job_id, include_result=False)
+    async def events():
+        while True:
+            try:
+                job = get_job(job_id, include_result=False).model_dump()
+            except HTTPException:
+                yield 'event: removed\ndata: {}\n\n'
+                return
+            yield 'event: progress\ndata: ' + json.dumps(job) + '\n\n'
+            if job['status'] not in ('queued', 'running'):
+                return
+            await asyncio.sleep(.5)
+    return StreamingResponse(events(), media_type='text/event-stream',
+                             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    if not (JOBS.get(job_id) or saved_job(job_id)):
+        raise HTTPException(404, 'Job not found')
+    JOBS.cancel(job_id)
+    return get_job(job_id, include_result=False)
+
+
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str):
+    current = JOBS.get(job_id)
+    if current and current['status'] == 'running' and saved_job(job_id):
+        JOBS.cancel(job_id)
+        return {'deleted': False, 'cancel_requested': True}
     if JOBS.remove(job_id):
         return {"deleted": True}
     raise HTTPException(404, "Job not found")
@@ -628,7 +671,17 @@ async def _start_gc():
 # Persisted investigation endpoints. IDs are server generated, never file paths.
 def _artifact(identifier):
     try:
-        return artifacts.read(identifier)
+        item = artifacts.read(identifier)
+        background = item['analysis'].get('background_job') or {}
+        if background.get('job_id'):
+            job = JOBS.get(background['job_id']) or saved_job(background['job_id'])
+            if job:
+                item['analysis']['background_job'] = public_job(job)
+                if job['status'] == 'interrupted':
+                    for stage in item['analysis'].get('stages', []):
+                        if stage['status'] == 'pending':
+                            stage.update(status='failed', reason=job['error'])
+        return item
     except (FileNotFoundError, ValueError):
         raise HTTPException(404, "Analysis not found")
 
@@ -656,38 +709,43 @@ def get_analysis(identifier: str):
 
 @app.delete("/api/analyses/{identifier}")
 def delete_analysis(identifier: str):
-    _artifact(identifier)
+    item = _artifact(identifier)
+    if item['analysis'].get('background_job', {}).get('status') in ('queued', 'running'):
+        raise HTTPException(409, 'Cancel the background analysis before deleting its saved report')
     return {"deleted": artifacts.remove(identifier)}
 
 
 @app.post("/api/analyses/{identifier}/capture")
 def set_capture(identifier: str, metadata: CaptureMetadata):
-    item = _artifact(identifier)
-    from datetime import datetime
-    for value in (metadata.captured_at, metadata.process_start):
-        if value:
-            try: datetime.fromisoformat(value)
-            except ValueError: raise HTTPException(422, "Capture/start times must be ISO timestamps")
-    item["analysis"]["capture"] = metadata.model_dump()
-    provenance = item["analysis"].get("source_provenance") or {}
-    matched = bool(provenance.get("manifest_valid") and metadata.build_id and metadata.build_id == provenance.get("build_id"))
-    provenance["build_verified"] = matched
-    for finding in item["analysis"].get("findings", []):
-        for loc in finding.get("source_locations", []): loc["build_verified"] = matched
-    for entry in item["analysis"].get("dominators", []):
-        for path in entry.get("root_paths", {}).get("paths", []):
-            locations = [edge.get("source") for edge in path["edges"]]
-            locations += [frame.get("source") for root in path["root"] for frame in root.get("frames", [])]
-            for loc in locations:
-                if loc:
-                    loc["build_verified"] = matched
-                    if loc.get("context"): loc["context"]["build_verified"] = matched
-    return artifacts.save(item["analysis"], item["kind"])
+    with artifacts.LOCK:
+        item = _artifact(identifier)
+        from datetime import datetime
+        for value in (metadata.captured_at, metadata.process_start):
+            if value:
+                try: datetime.fromisoformat(value)
+                except ValueError: raise HTTPException(422, "Capture/start times must be ISO timestamps")
+        item["analysis"]["capture"] = metadata.model_dump()
+        provenance = item["analysis"].get("source_provenance") or {}
+        matched = bool(provenance.get("manifest_valid") and metadata.build_id and metadata.build_id == provenance.get("build_id"))
+        provenance["build_verified"] = matched
+        for finding in item["analysis"].get("findings", []):
+            for loc in finding.get("source_locations", []): loc["build_verified"] = matched
+        for entry in item["analysis"].get("dominators", []):
+            for path in entry.get("root_paths", {}).get("paths", []):
+                locations = [edge.get("source") for edge in path["edges"]]
+                locations += [frame.get("source") for root in path["root"] for frame in root.get("frames", [])]
+                for loc in locations:
+                    if loc:
+                        loc["build_verified"] = matched
+                        if loc.get("context"): loc["context"]["build_verified"] = matched
+        return artifacts.save(item["analysis"], item["kind"])
 
 
 @app.post("/api/analyses/{identifier}/source/{session}")
 def attach_source(identifier: str, session: str):
     item = _artifact(identifier)
+    if item['analysis'].get('background_job', {}).get('status') in ('running', 'queued'):
+        raise HTTPException(409, 'Finish or stop background analysis before replacing the attached source')
     source = _resolve_source(session)
     data = item["analysis"]
     from .analyzers.diagnostics import _build_source_locations_for_finding

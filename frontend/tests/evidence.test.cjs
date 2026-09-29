@@ -239,3 +239,83 @@ test('incident report leads with log findings, timeline and readable match expla
     assert.ok(html.includes(text), text)
   assert.ok(html.indexOf('What the server log adds') < html.indexOf('Related log events'))
 })
+
+const { watchHeapJob } = require('../src/heapJobClient.js')
+const settle = () => new Promise(resolve => setImmediate(resolve))
+
+function fakeEvents() {
+  let instance
+  class Events {
+    constructor(url) { this.url = url; this.handlers = {}; instance = this }
+    addEventListener(name, handler) { this.handlers[name] = handler }
+    close() { this.closed = true }
+    send(job) { this.handlers.progress({ data: JSON.stringify(job) }) }
+  }
+  return { Events, get stream() { return instance } }
+}
+
+test('background stream fetches one report per revision and retains it until completion', async () => {
+  const events = fakeEvents(), reports = [], statuses = [], requests = []
+  const stop = watchHeapJob('job', {
+    onStatus: value => statuses.push(value), onReport: value => reports.push(value),
+    onError: message => assert.fail(message),
+  }, { Events: events.Events, request: async url => {
+    requests.push(url)
+    return { ok: true, json: async () => ({ analysis: { histogram_complete: true } }) }
+  } })
+  try {
+    const initial = { status: 'running', analysis_id: 'abc', revision: 1 }
+    events.stream.send(initial)
+    await settle()
+    assert.equal(reports.length, 1)
+    events.stream.send({ ...initial, scan_bytes: 100 })
+    await settle()
+    assert.equal(requests.length, 1)
+    events.stream.send({ ...initial, status: 'cancelled', revision: 2 })
+    await settle()
+    assert.equal(reports.length, 2)
+    assert.equal(statuses.at(-1).status, 'cancelled')
+    assert.ok(events.stream.closed)
+  } finally { stop() }
+})
+
+test('detaching during a report request prevents stale navigation', async () => {
+  const events = fakeEvents(), reports = []
+  let resolve
+  const stop = watchHeapJob('old', { onStatus: () => {}, onReport: r => reports.push(r), onError: assert.fail }, {
+    Events: events.Events, request: () => new Promise(r => { resolve = r }),
+  })
+  events.stream.send({ status: 'running', analysis_id: 'abc', revision: 1 })
+  stop()
+  resolve({ ok: true, json: async () => ({ analysis: { analysis_id: 'old' } }) })
+  await settle()
+  assert.deepEqual(reports, [])
+})
+
+test('stream failure falls back to polling and recovers the saved report', async () => {
+  const events = fakeEvents()
+  let complete
+  const received = new Promise(resolve => { complete = resolve })
+  const stop = watchHeapJob('job', { onStatus: () => {}, onReport: complete, onError: assert.fail }, {
+    Events: events.Events, delay: 1,
+    request: async url => ({ ok: true, json: async () => url.includes('/api/jobs/')
+      ? { status: 'done', analysis_id: 'abc', revision: 3 }
+      : { analysis: { analysis_id: 'abc' } } }),
+  })
+  try {
+    events.stream.onerror()
+    assert.deepEqual(await received, { analysis_id: 'abc' })
+  } finally { stop() }
+})
+
+test('background progress explains scan scope and preserves cancellation state', () => {
+  const HeapBackground = require('../src/components/HeapBackground.jsx').default
+  const html = renderToString(React.createElement(HeapBackground, {
+    job: { status: 'running', stage: 'Tracing retention', scan_pass: 3, scan_bytes: 100, scan_total: 200, cancel_requested: true },
+    onCancel: () => {},
+  })).replace(/<!--.*?-->/g, '')
+  assert.ok(html.includes('Scan pass 3'))
+  assert.ok(html.includes('Stopping background analysis'))
+  assert.ok(html.includes('completion time is unknown'))
+  assert.ok(html.includes('disabled'))
+})

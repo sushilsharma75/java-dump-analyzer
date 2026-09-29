@@ -75,6 +75,23 @@ class JobStore:
         self._cancellations: Dict[str, Callable[[], None]] = {}
         self._lock = threading.Lock()
 
+    def update(self, job_id, **values):
+        with self._lock:
+            if job_id in self._jobs:
+                if values.get('status') in ('done', 'error', 'cancelled'):
+                    values['finished_at'] = time.time()
+                self._jobs[job_id].update(values)
+
+    def cancel(self, job_id):
+        with self._lock:
+            job = self._jobs.get(job_id)
+            callback = self._cancellations.get(job_id)
+            if not job or not callback or job['status'] != 'running':
+                return False
+            job['cancel_requested'] = True
+            callback()
+            return True
+
     def on_cancel(self, job_id, callback):
         with self._lock:
             self._cancellations[job_id] = callback
@@ -110,7 +127,8 @@ class JobStore:
                 return None
             # Refresh derived fields
             job = dict(job)  # shallow copy so the caller can't mutate state
-            job["elapsed_seconds"] = time.time() - job["started_at"]
+            job["elapsed_seconds"] = job.get("finished_at", time.time()) - job["started_at"]
+            job["stage_elapsed_seconds"] = job.get("finished_at", time.time()) - job.get("stage_started_at", job["started_at"])
             job["eta_seconds"] = None
             if (0 < job["bytes_processed"] < job["bytes_total"]
                     and job["status"] == "running"
@@ -188,7 +206,7 @@ class JobStore:
         with self._lock:
             for jid, job in self._jobs.items():
                 age = now - job["started_at"]
-                if job["status"] in ("done", "error") and age > max_age_seconds:
+                if job["status"] in ("done", "error", "cancelled") and age > max_age_seconds:
                     to_drop.append(jid)
         for jid in to_drop:
             self.remove(jid)

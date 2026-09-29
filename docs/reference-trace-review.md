@@ -24,12 +24,11 @@ source attachment endpoints, and the React investigation/report views.
 
 ## Limits that still explain incomplete traces
 
-- Automatic indexing defaults to at most 512 MiB and one million objects. Quick
-  analyses and skipped/failed indexing do not provide persistent object browsing.
-  Raising `HEAP_INDEX_MAX_BYTES` and `HEAP_INDEX_MAX_OBJECTS` requires reanalysis;
-  attaching source cannot reconstruct an index that was never built. Dominator
-  analysis has separate byte/object limits. Benchmark higher limits before using
-  them on production-size dumps.
+- Full indexing and compact dominators now run without default size cutoffs.
+  Explicit `HEAP_INDEX_MAX_*` / `HEAP_DOMINATOR_MAX_*` settings may limit them.
+  Quick analysis or a failed index still prevents object browsing. Reanalysis is
+  needed after a skipped index; attaching source cannot reconstruct it.
+  See `HEAP_PERFORMANCE.md` for measured scale and remaining runtime limits.
 - Root search returns at most five representative paths, with a global visited
   set, depth and node budgets. It does not enumerate every alternative retaining
   path. Automatic report paths cover the top three dominators; other objects can

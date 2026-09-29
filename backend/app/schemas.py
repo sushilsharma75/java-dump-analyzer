@@ -30,7 +30,7 @@ class CaptureMetadata(BaseModel):
 
 class AnalysisStage(BaseModel):
     stage: str
-    status: Literal["completed", "partial", "skipped", "failed"]
+    status: Literal["completed", "partial", "skipped", "failed", "pending", "cancelled"]
     reason: Optional[str] = None
 
 
@@ -286,6 +286,7 @@ class SkippedAnalysis(BaseModel):
 
 class HeapDumpAnalysis(BaseModel):
     analysis_id: str = ""
+    background_job: Dict[str, Any] = Field(default_factory=dict)
     engine: str = "native"
     input_format: Dict[str, Any] = Field(default_factory=lambda: {"format": "hprof", "compression": None})
     capture: CaptureMetadata = Field(default_factory=CaptureMetadata)
@@ -466,7 +467,14 @@ class JobStatus(BaseModel):
     elapsed_seconds: float = 0.0
     eta_seconds: Optional[float] = None
     error: Optional[str] = None
-    # Populated when status == "done"
+    analysis_id: Optional[str] = None
+    revision: int = 0
+    scan_pass: int = 0
+    scan_bytes: int = 0
+    scan_total: int = 0
+    stage_elapsed_seconds: float = 0
+    cancel_requested: bool = False
+    # Latest saved report, including while background analysis is running
     result: Optional[Dict[str, Any]] = None
 
 

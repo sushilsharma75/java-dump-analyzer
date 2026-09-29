@@ -22,6 +22,12 @@ then use the heap workbench to search the full histogram, navigate dominator
 children, calculate selected-object retained sets, inspect root paths, and review
 memory-waste candidates. Notes and object bookmarks are saved with the analysis.
 
+Full native indexing and retained-size analysis run automatically at every dump
+size, with the histogram available while background work continues. Dominators use
+compact memory-mapped arrays and Lengauer–Tarjan traversal; MAT is not required.
+Explicit operator budgets can restrict stages. Disk space, elapsed time, graph
+shape and JVM size-model assumptions still matter; see [measurements and limits](docs/HEAP_PERFORMANCE.md).
+
 Attaching matching Java source adds retaining-field declarations and candidate
 write/cleanup methods. These are source evidence, not proof of the historical
 allocation or insertion call. Attached server logs also participate in incident
@@ -30,6 +36,31 @@ correlation.
 Reanalyse older dumps to generate the new dominator completion metadata and
 constant-array information. OpenJ9 PHD/system-dump readers and general OQL are
 not implemented yet. See the [feature review and implementation status](docs/MAT_FEATURE_REVIEW.md).
+
+### Reports while heap analysis continues
+
+Heap uploads now use background jobs at every file size. After parsing, the full
+histogram is saved and displayed immediately (a prefix histogram in quick mode).
+Source matching, indexing, retention tracing, duplicate scans and deployment
+attribution continue under the same analysis ID. Findings are saved after each
+stage completes. Coverage marks unfinished stages as pending.
+
+The report shows the current stage, scan pass, file position and elapsed time.
+These scan percentages are not an overall completion estimate. **Stop background
+analysis** cancels the remaining work while keeping the latest saved report.
+Refreshing reconnects to the job; saved analyses also reopen from history. Starting
+another analysis leaves existing background work running. Saved notes and capture
+metadata are preserved as new findings arrive.
+
+Progress uses `GET /api/jobs/{job_id}/events` (server-sent events), with polling as
+fallback for proxies that buffer streams. Reports are downloaded only when their
+revision changes. `POST /api/jobs/{job_id}/cancel` requests cancellation;
+`GET /api/jobs/{job_id}?include_result=false` returns lightweight progress.
+
+The backend remains a single-process service. A backend restart preserves saved
+reports but interrupts unfinished work; it does not resume scans. Deploy the new
+backend and rebuild the frontend, then start a new analysis to use this behavior.
+An analysis already running under an older version cannot acquire checkpoints.
 
 ### Prerequisites
 
@@ -246,14 +277,16 @@ until explicitly deleted. Treat that directory as sensitive diagnostic data.
 
 ## Heap graph and size semantics
 
-Full API analyses always stream the complete dump for the histogram (unless quick
-mode is selected). Automatic object/edge indexing is limited to 512 MiB and one
-million objects by default. Above either limit, the report still includes the full
-histogram, source references, static-field findings and deployment attribution;
-object browsing is explicitly marked skipped. Object bodies and large arrays
-within the indexed workflow are processed in bounded chunks. SQLite holds incoming/outgoing indexes, roots,
-class metadata, thread records, and the dominator traversal state. Retention uses an
-iterative reverse-postorder algorithm; the graph does not need to fit in Python RAM.
+Full API analyses stream the complete dump for the histogram (unless quick mode
+is selected), then build the object index and compute retained sizes. There is no
+default byte/object cutoff. Explicit `HEAP_INDEX_MAX_*` and `HEAP_DOMINATOR_MAX_*`
+settings remain available. Arrays are processed in chunks; reference inserts and
+object updates are batched. SQLite stores the persistent object browser data.
+Dominator traversal resolves object IDs once into compact numeric adjacency
+arrays, then uses the Lengauer–Tarjan algorithm without SQL queries per object.
+Temporary memory-mapped arrays live beside the index and are removed on success,
+failure or cooperative cancellation. Their pages are reclaimable by the OS;
+this is not a fixed-RAM or runtime guarantee.
 
 Only recorded GC roots connect to the virtual root. Classes are **not all assumed
 to be roots**. Instances reference their classes; class/loader relationships and
@@ -269,17 +302,15 @@ recover every JVM's field padding, compact headers, alignment flags, or class-ob
 shallow overhead. Retained totals are exact for the constructed graph and modeled
 shallow sizes; they must not be advertised as universally equal to MAT results.
 
-Exact retained-size analysis respects `HEAP_DOMINATOR_MAX_BYTES` (512 MiB) and
-`HEAP_DOMINATOR_MAX_OBJECTS` (one million), including when an index exists. The old
-`HEAP_DISK_DOMINATORS` switch no longer bypasses these limits. Administrators can
-explicitly raise the byte and object limits after benchmarking their hardware;
-disk-backed storage bounds RAM usage, not execution time. Skipped retained sizes
-are unavailable, not zero. The bounded heuristic tracer is a separate optional
-stage, not a replacement for an exhaustive GC-root search.
+Exact retained-size analysis honors explicitly configured `HEAP_DOMINATOR_MAX_BYTES`
+and `HEAP_DOMINATOR_MAX_OBJECTS`, including when an index exists. The old
+`HEAP_DISK_DOMINATORS` switch does not bypass these limits. Skipped retained sizes
+are unavailable, not zero. The sampled tracer supplies additional ownership leads;
+it does not replace the dominator calculation or enumerate every GC-root path.
 
 Large-dump support means the parser/index accepts files up to the API's 50 GiB limit;
 it is **not a measured throughput or disk-space guarantee at 25–50 GiB**. SQLite
-indexes can substantially exceed dump size, and convergence time depends on graph
+indexes can substantially exceed dump size, and processing time depends on graph
 shape. Use a dedicated volume, benchmark representative dumps, and inspect stage
 status. Upload progress covers transfer; parse byte progress is not an ETA for the
 subsequent graph and dominator stages. The progress screen reports the active
@@ -388,15 +419,15 @@ cleaning up its transient job record.
 |---|---|---|
 | `DUMP_TMP_DIR` | OS temp directory + `postmortem` | Uploaded dump staging |
 | `ANALYSIS_DIR` | OS temp directory + `postmortem/analyses` | Persisted JSON and SQLite indexes; configure a durable volume |
-| `HEAP_INDEX_MAX_BYTES` | `536870912` | Automatic persistent object-index size ceiling; `0` disables it |
-| `HEAP_INDEX_MAX_OBJECTS` | `1000000` | Automatic index object-count ceiling |
+| `HEAP_INDEX_MAX_BYTES` | No automatic cutoff | Optional persistent object-index size ceiling; `0` disables it |
+| `HEAP_INDEX_MAX_OBJECTS` | No automatic cutoff | Optional index object-count ceiling |
 | `HEAP_DOMINATOR` | `1` | `0` disables dominator computation |
 | `HEAP_SUSPECT_PERCENT` | `10` | Retained-memory percentage threshold for automatic suspect findings |
 | `HEAP_SUSPECT_MIN_BYTES` | `1048576` | Minimum retained bytes for automatic suspect findings |
-| `HEAP_DOMINATOR_MAX_BYTES` | `536870912` | Retained-size analysis ceiling in bytes, also enforced with a persistent index |
-| `HEAP_DOMINATOR_MAX_OBJECTS` | `1000000` | Retained-size analysis object-count ceiling, including temporary indexes |
+| `HEAP_DOMINATOR_MAX_BYTES` | No automatic cutoff | Optional retained-size ceiling in bytes, also enforced with a persistent index |
+| `HEAP_DOMINATOR_MAX_OBJECTS` | No automatic cutoff | Optional retained-size object-count ceiling, including temporary indexes |
 | `HEAP_GRAPH_TRACE` | `1` | Bounded heuristic retention tracer |
-| `HEAP_GRAPH_MAX_BYTES` | `2147483648` | Heuristic tracer gate, in bytes |
+| `HEAP_GRAPH_MAX_BYTES` | No automatic size cutoff | Optional sampled retention tracer ceiling, in bytes; `0` disables |
 | `HEAP_WASTE_TRACE` | `1` | Duplicate-array analysis |
 | `HEAP_WASTE_MAX_BYTES` | `2147483648` | Legacy non-indexed duplicate scan gate, in bytes |
 | `HEAP_OOPS` | `auto` | `compressed`, `uncompressed`, or documented default assumption |

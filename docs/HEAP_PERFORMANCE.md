@@ -33,31 +33,44 @@ read buffer across forward gaps. Static field names resolve in a single table
 scan, and catalog transactions commit every 10,000 heap subrecords even inside a
 single large HPROF segment.
 
-Automatic persistent indexing defaults to at most 512 MiB and 1,000,000 objects.
-Exact retained-size computation separately enforces both limits, even for an
-existing index or an internally created temporary index. Explicit byte/object
-settings can raise these limits; the old `HEAP_DISK_DOMINATORS` flag cannot silently
-bypass them. See the README configuration table.
+The former 512 MiB / one-million-object automatic cutoffs have been removed after
+replacing SQL-per-object dominator traversal. Byte/object environment settings
+still enforce explicit operator budgets, including for temporary indexes.
+Full native indexing runs after the saved histogram checkpoint. No prefix-only
+quick mode is silently substituted.
 
-Large dumps still receive a complete streaming histogram, source references,
-static-field findings and deployment attribution. Stages above their limits are
-reported as skipped. Object browsing and exact retained sizes are unavailable for
-those reports; this change does not claim scalable exhaustive graph analysis of a
-38-million-object heap. No prefix-only quick mode is silently substituted.
+Sampled retention tracing now runs at every dump size by default. An explicit
+`HEAP_GRAPH_MAX_BYTES` still sets an operator ceiling; `HEAP_GRAPH_TRACE=0`
+disables it. The extended-scans option (`deep=true`) overrides a positive configured
+tracing ceiling and enables duplicate-array scans above their default 2 GB limit.
+Object-index and dominator budgets remain separate.
 
-A **Deep retention analysis** checkbox on the heap upload (API `deep=true`) lifts
-the 2 GB ceilings of retention tracing and the duplicate-array scan for that
-analysis only. Both stream the dump with bounded memory, so the cost is extra
-passes over the file, not RAM. It gives a 2–10 GB dump the GC-root → field →
-source path for the top consumer without building the object index or dominator
-tree. `HEAP_GRAPH_TRACE=0` / `HEAP_WASTE_TRACE=0` still disable the stages. Its
-runtime on a real multi-GB dump with tens of millions of objects has not been
-measured.
+The tracer streams object-array entries in small chunks, follows a connected path
+for each sampled object, excludes `Reference.referent` weak/soft/phantom edges,
+and detects static fields directly holding arrays. The chosen target is the
+largest shallow consumer. Previously, even a tiny application class in the top
+ten could displace a dominant primitive array. Findings describe observations,
+with explicit sampling and depth limits, rather than asserting a confirmed leak.
+
+Exact retained sizes now use compact numeric adjacency arrays and the simple
+Lengauer–Tarjan algorithm with iterative path compression. SQLite resolves object
+IDs in a streaming join; graph traversal then performs no SQL queries per node.
+Results are batch-inserted into the existing object browser's dominator table.
+Temporary arrays are memory-mapped in the index directory. Their pages can be
+reclaimed by the OS, but mapping is not a strict RSS cap. The engine checks free
+disk space before allocating scratch arrays, reports capacity failures, checks
+cancellation during traversal and cleans its scratch files on exit. An indexing
+failure does not trigger a second full index build for dominators.
+
+This remains an independent native engine, with no MAT dependency. Representative
+root paths still have search budgets; exact retained totals use the documented
+strong-reference and assumed object-layout model. Production-scale runtime on the
+user's 138-million-object dump remains unmeasured.
 
 Jobs now expose the active stage. The UI labels ETA as parse ETA and suppresses
 it after parsing finishes, while showing the ongoing analysis stage.
 
-## Reproduction and validation
+## Earlier parser regression measurements
 
 `backend/tests/test_heap_scaling.py` checks input read amplification rather than a
 machine-dependent time threshold, full-report preservation across each budget,
@@ -91,3 +104,76 @@ The user's actual dump, source repository and Windows runtime were not available
 for testing. A restored 10 GB / 15-minute runtime has not been established. Rebuild
 the frontend and restart/redeploy the backend to use these changes; an already
 running old analysis will not acquire them.
+
+## Progressive reports and background cancellation
+
+Asynchronous heap jobs now save the histogram before source matching and optional
+scans. Each completed stage updates that saved report. The browser opens the report
+while tracing continues and downloads another revision only when findings change.
+Server-sent progress events include the stage, scan pass, file position and elapsed
+time; polling is the fallback when a proxy prevents streaming.
+
+Cancellation is cooperative at buffered input reads/seeks, SQLite instruction
+boundaries and compact graph traversal checkpoints. It preserves completed checkpoints and leaves unfinished stages marked
+cancelled. It does not preserve a half-computed retention chain. Restarting the
+backend keeps saved reports and job metadata, but unfinished scans are reported as
+interrupted and must be rerun. These changes make the histogram available earlier;
+they do not establish faster tracing of a 138-million-object production heap.
+
+`test_heap_background.py` holds retention tracing open while querying the saved
+histogram, edits notes during the scan, and checks completion, cancellation,
+failure, restart metadata, scan progress, and terminal streaming events. Frontend
+tests cover revision-based fetching, stale-response suppression, cancellation
+copy, and recovery through polling.
+
+## Automatic tracing regression checks (2026-09-29)
+
+A 10.5 GiB sparse HPROF with three large byte arrays and one application owner
+completed a full histogram and identified `example.Cache.payload` with default
+tracing settings. The experiment used about 63 MiB peak process RSS. The fixture
+contains only four objects and skips sparse primitive payloads: it validates large
+file offsets and stage routing, not throughput on a 138-million-object heap.
+
+Additional tests cover a million-element object array with less than 20 MiB of
+traced Python allocation, early-exit array consumption, inherited weak references,
+static array owners, real array class names, and disjoint reference branches.
+
+## Native dominator benchmark
+
+`backend/tools/benchmark_heap_graph.py` streams a synthetic HPROF containing a
+long chain, shared references and 10% unreachable objects. It verifies the exact
+retained total and removes its temporary dump/index afterward. Run from the repo
+root with `backend/.venv/bin/python backend/tools/benchmark_heap_graph.py --objects 1000000`.
+
+The one-million-object run (41,001,146-byte HPROF) took 24.925 seconds to index and
+13.674 seconds for dominators/report extraction. Peak process RSS was 199,424 KiB;
+the resulting SQLite file was 381,833,216 bytes. Expected and computed reachable
+memory were both 21,600,000 bytes. These are local synthetic measurements, not
+production throughput guarantees. Index size can greatly exceed dump size.
+
+`test_heap_compact.py` checks every immediate dominator against an independent
+object-removal oracle on 30 random graphs, high unsigned object IDs, a constant
+number of traversal SELECT queries, cancellation cleanup/retry and disk preflight.
+Existing tests cover cycles, shared descendants, weak references and source paths.
+
+The five-million-object run (205,004,746-byte HPROF) took 125.673 seconds to index
+and 68.729 seconds for dominators/report extraction. Peak process RSS was 673,412
+KiB, and the completed SQLite index occupied 1,935,228,928 bytes. Computed retained
+memory matched the expected 108,000,000 bytes. Scratch mappings are now closed and
+deleted as each phase finishes, reducing the storage and resident pages carried
+into later phases.
+
+A subsequent 100,000-object run took 2.420 seconds for indexing and 1.350 seconds
+for dominators. The previous SQL implementation did not finish that graph during
+the comparison window and was interrupted inside its ancestor intersection loop;
+no completed baseline speed ratio is claimed.
+
+A separate full native analysis of the sparse 10.5 GiB fixture computed the exact
+expected 3,758,096,416 reachable bytes and two unreachable arrays, in 13.665 seconds
+with 64,088 KiB peak process RSS. Again, this contains only four objects and is a
+large-payload/offset check, not a production-scale graph benchmark.
+
+Latest validation: 286 backend tests and 22 frontend tests passed; the frontend
+production build succeeded. The actual production dump and Windows runtime have
+not been tested. Restart the backend and rebuild the frontend before reanalysis;
+existing jobs and previously saved skipped stages do not acquire the new engine.

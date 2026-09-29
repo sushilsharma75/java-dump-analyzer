@@ -16,9 +16,9 @@ def dominator_max_bytes() -> int:
     if os.environ.get("HEAP_DOMINATOR", "1") in ("0", "", "false", "False"):
         return 0
     try:
-        return int(os.environ.get("HEAP_DOMINATOR_MAX_BYTES", str(512 * 1024 * 1024)))
+        return int(os.environ.get("HEAP_DOMINATOR_MAX_BYTES", str(2**63 - 1)))
     except ValueError:
-        return 512 * 1024 * 1024
+        return 2**63 - 1
 
 
 @dataclass
@@ -31,14 +31,14 @@ class RetainedResult:
     object_count: int = 0
 
 
-def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
+def compute_retained(fp, top_n=25, model=None, index_path=None, source=None, stage_callback=None):
     """Compute graph retention with explicit root and reference-strength semantics."""
     import tempfile
     from pathlib import Path
     from .heap_index import build_index, retained, root_paths
 
     def run(path):
-        r = retained(path, top_n)
+        r = retained(path, top_n, stage_callback=stage_callback)
         entries = [DominatorEntry(**e) for e in r["entries"]]
         findings = []
         try:
@@ -110,7 +110,7 @@ def compute_retained(fp, top_n=25, model=None, index_path=None, source=None):
         return run(index_path)
     with tempfile.TemporaryDirectory(prefix="postmortem-dom-") as temp:
         path = Path(temp) / "graph.sqlite"
-        build_index(fp, path, model=model)
+        build_index(fp, path, model=model, stage_callback=stage_callback)
         return run(path)
 
 

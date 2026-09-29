@@ -1,36 +1,14 @@
-"""
-In-process retention tracer — answers "what holds the leaking objects alive?"
-without Eclipse MAT and without a full dominator tree.
+"""Sampled reverse reference tracing with bounded frontiers and streamed arrays.
 
-Heap dumps record the object reference graph, but materializing the whole graph
-(or a dominator tree) for a 25GB dump is infeasible in Python. The trick here is
-to never build the full graph: to find *who holds the dominant objects*, we only
-need GC roots, class field layouts, and a SAMPLE of the dominant objects. Then we
-climb the graph in reverse, one level at a time:
-
-  Pass 1   walk once → class layouts (+ superclass chain), static-field targets,
-           GC roots, string + class tables.
-  Pass 2   walk once → collect a bounded sample of the dominant objects.
-  Pass N   for each level, walk once → find which objects reference the current
-           frontier (type-level), and whether any holder is a GC root, a static
-           field, or one of the user's own classes. Stop when we reach one.
-
-Memory stays bounded (roots + layouts + a capped frontier); the cost is a handful
-of streaming passes, which is why the caller gates this behind a file-size limit.
-The result is a retention chain like:
-
-    com.example.Order  ←  java.lang.Object[]  ←  com.example.OrderCache.entries
-
-where the last link is an instance/static field in the user's code, resolved to a
-file and line. This is heuristic (type-level, sampled — not exact retained size),
-but it points at the holding field, which is what a developer needs to fix a leak.
+Each reported chain follows connected object IDs. A field observation is not
+proof of GC-root reachability, unbounded growth, or exact retained size.
+Memory scales with class/root metadata and the configured sample, not array length.
 """
 from __future__ import annotations
-import os
-from collections import Counter
+import struct
 from typing import BinaryIO, Dict, List, Optional, Set, Tuple
 
-from ..schemas import Finding, Severity, SourceLocation, SourceSnippet
+from ..schemas import Finding, Severity, SourceLocation
 from .source import is_user_code
 from .heap_dump import (
     _Reader, _normalize_class_name, TYPE_SIZES,
@@ -149,7 +127,21 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
         elif sub == HEAP_OBJECT_ARRAY_DUMP:
             oid = reader.id(id_size); reader.u4(); n = reader.u4(); elem = reader.id(id_size)
             if on_objarray:
-                on_objarray(oid, elem, [reader.id(id_size) for _ in range(n)])
+                # Callbacks may stop after a match; consume the remaining payload
+                # without materializing millions of array entries.
+                array_end = reader.pos + n * id_size
+                def elements():
+                    remaining = n
+                    fmt = ">Q" if id_size == 8 else ">I"
+                    while remaining:
+                        count = min(8192, remaining)
+                        payload = reader.read(count * id_size)
+                        if len(payload) != count * id_size:
+                            raise ValueError("Truncated object array")
+                        yield from (v[0] for v in struct.iter_unpack(fmt, payload))
+                        remaining -= count
+                on_objarray(oid, elem, elements())
+                reader.skip(array_end - reader.pos)
             else:
                 reader.skip(n * id_size)
         elif sub == HEAP_PRIMITIVE_ARRAY_DUMP:
@@ -177,10 +169,21 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
             rid = reader.id(id_size); reader.skip(4)
             if on_root:
                 on_root(rid)
+        elif sub in (0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x90):
+            rid = reader.id(id_size)
+            if on_root and sub != 0x90:
+                on_root(rid)
+        elif sub == 0x8E:
+            rid = reader.id(id_size)
+            reader.skip(8)
+            if on_root:
+                on_root(rid)
+        elif sub == 0xFE:
+            reader.skip(4 + id_size)
         else:
-            # Unknown sub-tag — can't compute the rest of the segment safely.
-            reader.skip(max(0, seg_end - reader.pos))
-            return
+            raise ValueError(f"Unsupported HPROF heap tag {sub:#x} at {reader.pos - 1}")
+        if reader.pos > seg_end:
+            raise ValueError("Heap subrecord exceeds segment")
 
 
 class _Tracer:
@@ -195,7 +198,7 @@ class _Tracer:
         self.static_targets: Dict[int, Tuple[str, str]] = {}  # obj_id -> (class, field)
         self.roots: Set[int] = set()
         self.id_size = 8
-        self._layout_cache: Dict[int, List[Tuple[int, int]]] = {}
+        self._layout_cache: Dict[int, List[Tuple[int, int, bool]]] = {}
         self.class_name_by_id: Dict[int, str] = {}
 
     # ---- pass 1: tables, layouts, roots, static targets ----
@@ -222,14 +225,16 @@ class _Tracer:
             self.static_targets[val] = (
                 self.class_name_by_id.get(cid, "?"), self.strings.get(nid, "?"))
 
-    def full_layout(self, cid: int, _seen=None) -> List[Tuple[int, int]]:
+    def full_layout(self, cid: int, _seen=None) -> List[Tuple[int, int, bool]]:
         if cid in self._layout_cache:
             return self._layout_cache[cid]
         _seen = _seen or set()
         if cid in _seen:
             return []
         _seen.add(cid)
-        own = self.layouts_own.get(cid, [])
+        own = [(nid, ty, not (self.class_name_by_id.get(cid) == "java.lang.ref.Reference"
+                                    and self.strings.get(nid) == "referent"))
+               for nid, ty in self.layouts_own.get(cid, [])]
         sup = self.supers.get(cid, 0)
         res = list(own) + (self.full_layout(sup, _seen) if sup else [])
         self._layout_cache[cid] = res
@@ -237,11 +242,11 @@ class _Tracer:
 
     def _refs(self, cid: int, body: bytes):
         pos = 0
-        for nid, t in self.full_layout(cid):
+        for nid, t, strong in self.full_layout(cid):
             sz = self.id_size if t == 2 else TYPE_SIZES.get(t, 0)
             if pos + sz > len(body):
                 break
-            if t == 2:
+            if t == 2 and strong:
                 tgt = int.from_bytes(body[pos:pos + self.id_size], "big")
                 if tgt:
                     yield nid, tgt
@@ -261,7 +266,7 @@ class _Tracer:
                         out.append(oid)
                 _walk(reader, self.id_size, on_primarray=on_pa)
             else:
-                elem_ids = {cid for cid, nm in self.class_name_by_id.items() if nm == base}
+                elem_ids = {cid for cid, nm in self.class_name_by_id.items() if nm in (base, leaf)}
 
                 def on_oa(oid, elem, elems):
                     if elem in elem_ids and len(out) < self.sample_cap:
@@ -278,87 +283,67 @@ class _Tracer:
             _walk(reader, self.id_size, on_instance=on_inst)
         return out
 
-    # ---- level pass: who references the current frontier? ----
-    def holders(self, frontier: Set[int]):
-        edges: Counter = Counter()
-        terminals: List[Tuple[str, str, str]] = []  # (kind, class, field)
-        next_frontier: Set[int] = set()
-
-        def on_inst(oid, cid, body):
-            for nid, tgt in self._refs(cid, body):
-                if tgt in frontier:
-                    edges[(cid, nid)] += 1
-                    cname = self.class_name_by_id.get(cid, "?")
-                    fname = self.strings.get(nid, "?")
-                    if oid in self.static_targets:
-                        sc, sf = self.static_targets[oid]
-                        terminals.append(("static", sc, sf))
-                    elif is_user_code(cname):
-                        terminals.append(("user", cname, fname))
-                    elif oid in self.roots:
-                        terminals.append(("gcroot", cname, fname))
-                    elif len(next_frontier) < self.sample_cap:
-                        next_frontier.add(oid)
-
-        def on_arr(oid, elem, elems):
-            ename = self.class_name_by_id.get(elem, "?") + "[]"
-            for tgt in elems:
-                if tgt in frontier:
-                    edges[(("arr", elem), "[]")] += 1
-                    if oid in self.roots:
-                        terminals.append(("gcroot", ename, "[]"))
-                    elif len(next_frontier) < self.sample_cap:
-                        next_frontier.add(oid)
-                    break  # one hit per array is enough to enqueue it
-
-        reader, _ = _open(self.fp)
-        _walk(reader, self.id_size, on_instance=on_inst, on_objarray=on_arr)
-        return edges, terminals, next_frontier
-
-    def _edge_label(self, edge) -> str:
-        key, fld = edge
-        if isinstance(key, tuple) and key[0] == "arr":
-            return self.class_name_by_id.get(key[1], "?") + "[]"
-        return f"{self.class_name_by_id.get(key, '?')}.{self.strings.get(fld, '?')}"
-
-    @staticmethod
-    def _pick_terminal(terms: List[Tuple[str, str, str]]):
-        for kind in ("static", "user", "gcroot"):
-            of_kind = [t for t in terms if t[0] == kind]
-            if of_kind:
-                return Counter(of_kind).most_common(1)[0][0]
-        return None
+    def array_name(self, cid):
+        name = self.class_name_by_id.get(cid, "?")
+        return name if name.endswith("[]") else name + "[]"
 
     def trace(self, leaf: str):
-        """Return (chain:list[str], terminal:(kind,class,field)|None)."""
-        frontier = set(self.sample(leaf))
-        if not frontier:
-            return None, None
-        chain = [leaf]
-        terminal = None
+        # Every frontier entry carries its own connected path. Selecting the most
+        # frequent class independently at each level could fabricate a chain.
+        frontier = {oid: [leaf] for oid in self.sample(leaf)}
+        visited = set(frontier)
+        best = None
         for _ in range(self.max_levels):
             if not frontier:
                 break
-            edges, terms, nf = self.holders(frontier)
-            term = self._pick_terminal(terms)
-            if term and term[0] in ("static", "user"):
-                chain.append(f"{term[1]}.{term[2]}")
-                terminal = term
-                break
-            if not edges:
-                if term and term[0] == "gcroot":
-                    chain.append(f"a GC root ({term[1]})")
-                    terminal = term
-                break
-            best = edges.most_common(1)[0][0]
-            chain.append(self._edge_label(best))
-            frontier = nf
-            if not frontier:
-                if term and term[0] == "gcroot":
-                    chain.append(f"a GC root ({term[1]})")
-                    terminal = term
-                break
-        return chain, terminal
+            for oid, chain in frontier.items():
+                if oid in self.static_targets:
+                    cls, field = self.static_targets[oid]
+                    return chain + [f"{cls}.{field}"], ("static", cls, field)
+                if oid in self.roots:
+                    return chain + ["a GC root"], ("gcroot", leaf, "")
+            next_frontier = {}
+            terminal = None
+
+            def record(oid, target, label, cname, field):
+                nonlocal terminal, best
+                if oid in visited:
+                    return
+                chain = frontier[target] + [label]
+                if best is None or len(chain) > len(best):
+                    best = chain
+                if terminal is None:
+                    if oid in self.static_targets:
+                        cls, sf = self.static_targets[oid]
+                        terminal = (chain + [f"{cls}.{sf}"], ("static", cls, sf))
+                    elif is_user_code(cname):
+                        terminal = (chain, ("user", cname, field))
+                    elif oid in self.roots:
+                        terminal = (chain + ["a GC root"], ("gcroot", cname, field))
+                if len(next_frontier) < self.sample_cap and oid not in next_frontier:
+                    next_frontier[oid] = chain
+
+            def on_inst(oid, cid, body):
+                cname = self.class_name_by_id.get(cid, "?")
+                for nid, target in self._refs(cid, body):
+                    if target in frontier:
+                        field = self.strings.get(nid, "?")
+                        record(oid, target, f"{cname}.{field}", cname, field)
+
+            def on_arr(oid, elem, elements):
+                for target in elements:
+                    if target in frontier:
+                        name = self.array_name(elem)
+                        record(oid, target, name, "java.lang.Object[]", "[]")
+                        break
+
+            reader, _ = _open(self.fp)
+            _walk(reader, self.id_size, on_instance=on_inst, on_objarray=on_arr)
+            if terminal:
+                return terminal
+            visited.update(next_frontier)
+            frontier = next_frontier
+        return best, None
 
 
 def trace_retention(fp: BinaryIO, leaf_class: str, source=None,
@@ -391,10 +376,11 @@ def trace_retention(fp: BinaryIO, leaf_class: str, source=None,
                 loc.repo_path = info["repo_path"]
                 loc.snippet = info["snippet"]
         locations.append(loc)
-        severity = Severity.CRITICAL if kind == "user" else Severity.WARNING
+        severity = Severity.WARNING
         holder_desc = (
             f"the {'static ' if kind == 'static' else ''}field "
-            f"`{cls.rsplit('.', 1)[-1]}.{field}` in your code"
+            f"`{cls.rsplit('.', 1)[-1]}.{field}`"
+            + (" in your code" if is_user_code(cls) else "")
         )
     else:
         holder_desc = f"`{holder_label}`"
@@ -402,29 +388,25 @@ def trace_retention(fp: BinaryIO, leaf_class: str, source=None,
     return Finding(
         severity=severity,
         title=f"Retention path: `{leaf_simple}` is held by {holder_desc}",
+        conclusion="observation",
+        confidence="medium",
+        limitations=[
+            f"Samples up to {sample_cap} objects and searches up to {max_levels} reference levels.",
+            "A holding field does not prove GC-root reachability or unbounded growth.",
+            "Retained sizes are not computed by this trace; other owners may exist.",
+        ],
         description=(
-            f"Tracing the heap's reference graph back from `{leaf_class}` (the top memory "
-            f"consumer) shows what is keeping it alive:\n\n    {arrow_chain}\n\n"
-            "Read it right-to-left: the rightmost item is the GC root or field that anchors "
-            "the whole structure in memory. If that anchor keeps growing, so does the heap. "
-            "(This is a sampled, type-level path — it names the holding field, not an exact "
-            "retained size.)"
+            f"Connected references from sampled `{leaf_class}` objects:\n\n    {arrow_chain}\n\n"
+            "Read right-to-left. Each step refers to the preceding object. "
+            "The trace stops at a holding field, a GC root, or the search budget."
         ),
-        impact=(
-            "Everything reachable only through this path stays in memory for as long as the "
-            "anchor holds it. An anchor that accumulates entries is a leak: the heap fills, "
-            "GC works harder for less, and the JVM eventually throws OutOfMemoryError."
-        ),
-        likely_cause=(
-            f"{holder_desc[0].upper() + holder_desc[1:]} is accumulating `{leaf_simple}` "
-            "instances without bound — a cache/registry that's added to but never evicted, "
-            "or a structure that's never cleared."
-        ),
+        impact="These references identify an ownership lead for the sampled objects.",
+        likely_cause="Check whether this owner retains objects beyond their intended lifetime.",
         evidence=[f"retention chain: {arrow_chain}"]
                  + ([f"anchor resolved to {locations[0].repo_path}:{locations[0].line}"]
                     if locations and locations[0].repo_path else []),
         remediation=(
-            "Bound or clear the anchor field shown below. If it's a cache, give it a size/time "
+            "Check the owner’s lifecycle and compare captures for growth. If excessive retention is confirmed, use a size/time "
             "limit (Caffeine, Guava `CacheBuilder`) or evict explicitly; if it's a registry, "
             "make sure every add has a matching remove; if it's a buffer, release it when done."
         ),

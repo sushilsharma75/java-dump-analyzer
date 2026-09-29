@@ -1,3 +1,5 @@
+import HeapBackground from './components/HeapBackground'
+import { watchHeapJob } from './heapJobClient'
 import AutomaticIncident from './components/AutomaticIncident'
 import ServerLogWorkspace, { IncidentReport } from './components/ServerLogWorkspace'
 import DatabaseAnalysis from './components/DatabaseAnalysis'
@@ -13,18 +15,10 @@ import ComparisonPanel from './components/ComparisonPanel'
 import { ReportProvider } from './reportContext'
 import {
   analyzeThreadDump,
-  analyzeHeapDumpSync,
   analyzeHeapDumpAsync,
   analyzeHeapDumpPath,
   analyzeGCLog,
-  getJob,
-  deleteJob,
 } from './api'
-
-// Files smaller than this go through the synchronous endpoint; larger get the
-// async pipeline with job polling.
-const ASYNC_HEAP_THRESHOLD = 150 * 1024 * 1024 // 150 MB
-const POLL_INTERVAL_MS = 500
 
 export default function App() {
   const [section, setSection] = useState('jvm')
@@ -56,7 +50,8 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState({ loaded: 0, total: 0 })
   const [jobStatus, setJobStatus] = useState(null)
   const activeJobRef = useRef(null)
-  const pollTimerRef = useRef(null)
+  const stopWatchingRef = useRef(null)
+  const [backgroundError, setBackgroundError] = useState(null)
 
   // On mount, see if we have a persisted source session
   useEffect(() => {
@@ -114,28 +109,11 @@ export default function App() {
     }
   }, [])
 
-  // --- Heap upload (sync or async based on size) ---
+  // --- Heap upload: every report can be opened before background work ends ---
   const handleHeapUpload = useCallback(async (file, quick = false, deep = false) => {
     setError(null)
     setFilename(file.name)
 
-    // Small files → simple synchronous path
-    if (file.size < ASYNC_HEAP_THRESHOLD) {
-      setLoading(true)
-      try {
-        const result = await analyzeHeapDumpSync(file, quick, sourceSession?.session_id || null, deep)
-        setAnalysis(result)
-        setHeapAnalysis(result)
-        setView('heap')
-      } catch (e) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
-      return
-    }
-
-    // Big files → upload with progress, then poll the job
     setView('heap_progress')
     setHeapPhase('uploading')
     setUploadProgress({ loaded: 0, total: file.size })
@@ -147,7 +125,7 @@ export default function App() {
       activeJobRef.current = initial.job_id
       setHeapPhase('parsing')
       setJobStatus(initial)
-      startPolling(initial.job_id)
+      startWatching(initial.job_id, file.name)
     } catch (e) {
       setError(e.message)
       setView('landing')
@@ -167,7 +145,7 @@ export default function App() {
       const initial = await analyzeHeapDumpPath(path, quick, sourceSession?.session_id || null, deep)
       activeJobRef.current = initial.job_id
       setJobStatus(initial)
-      startPolling(initial.job_id)
+      startWatching(initial.job_id, path)
     } catch (e) {
       setError(e.message)
       setView('landing')
@@ -175,46 +153,61 @@ export default function App() {
     }
   }, [sourceSession])
 
-  const startPolling = (jobId) => {
-    if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
-    const tick = async () => {
-      // Bail if the job has been abandoned
-      if (activeJobRef.current !== jobId) return
-      try {
-        const j = await getJob(jobId)
+  const startWatching = (jobId, name) => {
+    stopWatchingRef.current?.()
+    activeJobRef.current = jobId
+    setBackgroundError(null)
+    try { localStorage.setItem('postmortem.heap_job', JSON.stringify({ jobId, name })) } catch {}
+    stopWatchingRef.current = watchHeapJob(jobId, {
+      onStatus: j => {
+        if (activeJobRef.current !== jobId) return
         setJobStatus(j)
-        if (j.status === 'done' && j.result) {
-          setAnalysis(j.result)
-          setHeapAnalysis(j.result)
+        setBackgroundError(null)
+        if (!['running', 'queued'].includes(j.status)) {
           setHeapPhase('done')
-          setView('heap')
-          activeJobRef.current = null
-          return
+          if (!j.analysis_id) setError(j.error || j.stage)
         }
-        if (j.status === 'error') {
-          setError(j.error || 'Heap parse failed')
-          setView('landing')
-          setHeapPhase(null)
-          activeJobRef.current = null
-          return
-        }
-        pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS)
-      } catch (e) {
-        setError(e.message)
-        activeJobRef.current = null
-      }
-    }
-    pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS)
+      },
+      onReport: result => {
+        if (activeJobRef.current !== jobId) return
+        setAnalysis(result); setHeapAnalysis(result); setView('heap')
+        setHeapPhase(result.background_job?.status === 'running' ? 'background' : 'done')
+      },
+      onError: message => {
+        if (activeJobRef.current === jobId) setBackgroundError(message)
+      },
+    })
   }
 
+  const cancelBackground = async () => {
+    const jid = activeJobRef.current
+    if (!jid) return
+    try {
+      const response = await fetch(`/api/jobs/${jid}/cancel`, { method: 'POST' })
+      if (!response.ok) throw new Error('Could not cancel background analysis')
+      if (activeJobRef.current === jid) setJobStatus(await response.json())
+    } catch (e) { setBackgroundError(e.message) }
+  }
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('postmortem.heap_job'))
+      if (saved?.jobId) {
+        setFilename(saved.name || saved.jobId)
+        setView('heap_progress'); setHeapPhase('parsing')
+        setUploadProgress({ loaded: 1, total: 1 })
+        startWatching(saved.jobId, saved.name)
+      }
+    } catch {}
+    return () => stopWatchingRef.current?.()
+  }, [])
+
   const reset = useCallback(() => {
-    // If a heap job is in flight, abandon it server-side
-    if (activeJobRef.current) {
-      const jid = activeJobRef.current
-      activeJobRef.current = null
-      deleteJob(jid).catch(() => {})
-    }
-    if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+    // Navigation detaches from the stream; background work and saved reports survive.
+    activeJobRef.current = null
+    stopWatchingRef.current?.()
+    try { localStorage.removeItem('postmortem.heap_job') } catch {}
+    setBackgroundError(null)
     setView('landing')
     setAnalysis(null)
     setError(null)
@@ -224,13 +217,6 @@ export default function App() {
     setJobStatus(null)
   }, [])
 
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
-    }
-  }, [])
-
   const updateAnalysis = updated => {
     setAnalysis(updated)
     if (view === 'thread') setThreadAnalysis(updated)
@@ -238,7 +224,7 @@ export default function App() {
     if (view === 'gc') setGcAnalysis(updated)
   }
 
-  const preparationBusy = loading || sourceBusy || logBusy || ['uploading', 'parsing'].includes(heapPhase)
+  const preparationBusy = loading || sourceBusy || logBusy || ['uploading', 'parsing', 'background'].includes(heapPhase)
   const workflowBusy = preparationBusy || incidentBusy
 
   return (
@@ -252,7 +238,10 @@ export default function App() {
           setAnalysis(saved); setView(kind); setFilename(saved.analysis_id)
           setSection(kind === 'database' ? 'database' : 'jvm')
           if (kind === 'thread') setThreadAnalysis(saved)
-          if (kind === 'heap') setHeapAnalysis(saved)
+          if (kind === 'heap') {
+            setHeapAnalysis(saved)
+            if (saved.background_job?.job_id) startWatching(saved.background_job.job_id, saved.analysis_id)
+          }
           if (kind === 'gc') setGcAnalysis(saved)
           if (kind === 'server_log') { setServerLog(saved); setView('landing'); setAnalysis(null) }
         }} />}
@@ -291,12 +280,16 @@ export default function App() {
         {view === 'incident' && analysis && <div className="max-w-7xl mx-auto mt-6"><IncidentReport result={analysis} sourceSession={sourceSession} /></div>}
         {view === 'database' && analysis && <DatabaseAnalysis key={analysis.analysis_id} analysis={analysis} threadAnalysis={threadAnalysis} />}
         {view === 'heap_progress' && (
+          <>
+          {backgroundError && <p role="alert">{backgroundError}</p>}
           <HeapProgress
             phase={heapPhase}
             uploadProgress={uploadProgress}
             jobStatus={jobStatus}
             filename={filename}
           />
+          {error && <p role="alert">{error}</p>}
+          </>
         )}
         {view === 'thread' && analysis && (
           <>
@@ -328,6 +321,9 @@ export default function App() {
         )}
         {view === 'heap' && analysis && (
           <>
+            <div className="max-w-7xl mx-auto pt-8">
+              <HeapBackground job={jobStatus} error={backgroundError} onCancel={cancelBackground} />
+            </div>
             {!serverLog && heapAnalysis && threadAnalysis && (
               <div className="max-w-7xl mx-auto pt-8">
                 <CorrelationPanel heap={heapAnalysis} thread={threadAnalysis} gc={gcAnalysis} sourceSession={sourceSession} />

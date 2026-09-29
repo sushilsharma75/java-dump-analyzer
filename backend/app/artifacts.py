@@ -3,6 +3,9 @@
 import json
 import re
 import uuid
+import threading
+
+LOCK = threading.RLock()
 
 from .paths import analysis_directory
 

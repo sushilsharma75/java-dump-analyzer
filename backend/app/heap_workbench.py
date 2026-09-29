@@ -128,9 +128,10 @@ class Notes(BaseModel):
 
 @router.put("/{identifier}/notes")
 def notes(identifier: str, req: Notes):
-    data = analysis(identifier)
-    data["investigation_notes"] = req.model_dump()
-    artifacts.save(data, "heap")
+    with artifacts.LOCK:
+        data = analysis(identifier)
+        data["investigation_notes"] = req.model_dump()
+        artifacts.save(data, "heap")
     return req
 
 

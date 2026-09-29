@@ -21,7 +21,7 @@ def detect_format(header):
 
 
 @contextmanager
-def native_input(path, max_bytes, temp_dir=None, stage=None):
+def native_input(path, max_bytes, temp_dir=None, stage=None, check=None):
     """Keep the uncompressed file open only for the duration of analysis."""
     with open(path, "rb") as raw:
         kind = detect_format(raw.read(512))
@@ -37,6 +37,8 @@ def native_input(path, max_bytes, temp_dir=None, stage=None):
             total = 0
             with gzip.GzipFile(fileobj=raw) as compressed:
                 while chunk := compressed.read(1024 * 1024):
+                    if check:
+                        check()
                     total += len(chunk)
                     if total > max_bytes:
                         raise ValueError("Expanded heap exceeds the configured input byte limit")

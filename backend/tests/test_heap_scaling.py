@@ -88,3 +88,37 @@ def test_post_parse_stages_have_no_false_zero_eta():
     assert store.get(job)['eta_seconds'] is None
     store.mark_done(job, {})
     assert store.get(job)['stage'] == 'Complete'
+
+
+def test_default_index_and_dominators_cross_old_size_cutoff(tmp_path, monkeypatch):
+    import struct
+    data, _ = fixture()
+    for setting in ('HEAP_INDEX_MAX_BYTES', 'HEAP_INDEX_MAX_OBJECTS',
+                    'HEAP_DOMINATOR_MAX_BYTES', 'HEAP_DOMINATOR_MAX_OBJECTS'):
+        monkeypatch.delenv(setting, raising=False)
+    # Unknown top-level extension payloads are skipped by both parsers. Sparse
+    # records exercise real large-file offsets without hashing GiB of arrays.
+    with (tmp_path / 'large.hprof').open('w+b') as fp:
+        fp.write(data)
+        for _ in range(2):
+            length = 3 * 1024**3
+            fp.write(struct.pack('>BII', 0x77, 0, length))
+            fp.seek(length - 1, 1)
+            fp.write(b'\0')
+        fp.seek(0)
+        result = parse_heap_dump(fp, index_path=tmp_path / 'graph.sqlite')
+    assert result.dominators
+    assert any(s.stage == 'object index' and s.status == 'completed' for s in result.stages)
+    assert not any(s.stage.startswith(('object index', 'dominator')) for s in result.skipped_analyses)
+
+
+def test_failed_index_is_not_built_again_for_dominators(tmp_path, monkeypatch):
+    data, _ = fixture()
+    calls = []
+    def fail(*args, **kwargs):
+        calls.append(True)
+        raise OSError('test disk full')
+    monkeypatch.setattr('app.analyzers.heap_index.build_index', fail)
+    result = parse_heap_dump(io.BytesIO(data), index_path=tmp_path / 'graph.sqlite')
+    assert len(calls) == 1
+    assert any(s.stage.startswith('dominator') and 'test disk full' in s.reason for s in result.skipped_analyses)

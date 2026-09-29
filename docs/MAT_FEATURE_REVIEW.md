@@ -2,6 +2,11 @@
 
 Reviewed: 2026-09-26.
 
+Update 2026-09-29: native dominators now use compact memory-mapped arrays and
+Lengauer–Tarjan traversal; the default 512 MiB / one-million-object gates described
+in the historical gap list below have been removed. Explicit operator budgets
+remain. See [performance measurements](HEAP_PERFORMANCE.md).
+
 ## Recommendation
 
 The user's primary objective is source-assisted diagnosis: identify the application code associated with observed retention and explain the next change to investigate. Native investigation features and source attribution should support that workflow.
