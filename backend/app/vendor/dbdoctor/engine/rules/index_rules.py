@@ -8,10 +8,10 @@ from app.vendor.dbdoctor.engine.models import Snapshot
 from app.vendor.dbdoctor.engine.rules.base import (
     Finding,
     Rule,
-    equality_filter_columns,
     fmt_bytes,
     register,
 )
+from app.vendor.dbdoctor.engine.sql_analysis import filter_candidates, simple_index_columns
 from app.vendor.dbdoctor.engine.thresholds import THRESHOLDS as T
 
 STAGING_NOTE = "Test in staging first: measure the query with EXPLAIN before and after."
@@ -29,73 +29,69 @@ class MissingIndexCandidate(Rule):
         return self._evaluate_mysql(snapshot)
 
     def _evaluate_pg(self, snapshot: Snapshot) -> list[Finding]:
-        findings = []
-        for t in snapshot.tables:
-            if (t.seq_scans or 0) < T.i1_min_seq_scans:
-                continue
-            if t.size_bytes < T.i1_min_table_size_bytes:
-                continue
-            columns = self._filter_columns_for(snapshot, f"{t.schema_name}.{t.name}")
-            if not columns:
-                continue
-            findings.append(
-                self._make(snapshot, t.name, t.size_bytes, columns, seq_scans=t.seq_scans)
-            )
-        return findings
+        return self._candidates(snapshot, postgres=True)
 
     def _evaluate_mysql(self, snapshot: Snapshot) -> list[Finding]:
-        sizes = {f"{t.schema_name}.{t.name}".lower(): t.size_bytes for t in snapshot.tables}
-        findings = []
-        seen: set[str] = set()
-        for q in snapshot.queries:
-            if not q.full_scan_flag or q.calls < T.i1_min_calls:
-                continue
-            if not q.rows_examined or not q.normalized_sql.lower().startswith("select"):
-                continue
-            selectivity = q.rows_examined / max(q.rows_returned, 1)
-            if selectivity < T.i1_scan_selectivity:
-                continue
-            table = _resolved_table(snapshot, q.normalized_sql)
-            if not table or table in seen:
-                continue
-            size = sizes.get(table, 0)
-            if size < T.i1_min_table_size_bytes:
-                continue
-            columns = equality_filter_columns(q.normalized_sql)
-            if not columns:
-                continue
-            seen.add(table)
-            findings.append(
-                self._make(
-                    snapshot,
-                    table,
-                    size,
-                    columns,
-                    calls=q.calls,
-                    rows_examined_per_call=round(q.rows_examined / max(q.calls, 1)),
-                    rows_returned_per_call=round(q.rows_returned / max(q.calls, 1), 1),
-                )
-            )
-        return findings
+        return self._candidates(snapshot, postgres=False)
 
-    def _filter_columns_for(self, snapshot: Snapshot, table: str) -> list[str]:
-        """Equality-filter columns used by top queries against *table*,
-        excluding columns that already lead an existing index."""
-        indexed_leading = set()
-        for idx in snapshot.indexes:
-            if idx.table.lower() != table.lower():
-                continue
-            cols = _safe_btree_columns(idx.definition)
-            if cols:
-                indexed_leading.add(cols[0])
-        columns: list[str] = []
+    def _candidates(self, snapshot: Snapshot, *, postgres: bool) -> list[Finding]:
+        findings = []
+        seen = set()
         for q in snapshot.queries:
-            if _resolved_table(snapshot, q.normalized_sql) != table.lower():
+            if not postgres and (
+                not q.full_scan_flag
+                or q.calls < T.i1_min_calls
+                or not q.rows_examined
+                or q.rows_examined / max(q.rows_returned, 1) < T.i1_scan_selectivity
+            ):
                 continue
-            for col in equality_filter_columns(q.normalized_sql):
-                if col not in indexed_leading and col not in columns:
-                    columns.append(col)
-        return columns
+            for reference, columns in filter_candidates(q.normalized_sql, snapshot.meta.engine):
+                matches = [
+                    t
+                    for t in snapshot.tables
+                    if reference == f"{t.schema_name}.{t.name}"
+                    or ("." not in reference and reference == t.name)
+                ]
+                if len(matches) != 1:
+                    continue
+                table = matches[0]
+                qualified = f"{table.schema_name}.{table.name}"
+                if table.size_bytes < T.i1_min_table_size_bytes:
+                    continue
+                if postgres and (table.seq_scans or 0) < T.i1_min_seq_scans:
+                    continue
+                leading = {
+                    cols[0]
+                    for idx in snapshot.indexes
+                    if idx.table == qualified and (cols := simple_index_columns(idx.definition))
+                }
+                if snapshot.schema_catalog:
+                    leading.update(
+                        idx.columns[0]
+                        for idx in snapshot.schema_catalog.indexes
+                        if idx.plain_btree and idx.columns and idx.table == qualified
+                    )
+                # A leading filter key already exists: a plan is needed to justify more.
+                if leading.intersection(columns):
+                    continue
+                key = (qualified, columns)
+                if key in seen:
+                    continue
+                seen.add(key)
+                extra = {"qualified_table": qualified, "query_digest": q.query_digest}
+                if postgres:
+                    extra["seq_scans"] = table.seq_scans
+                else:
+                    extra["calls"] = q.calls
+                    extra["rows_examined_per_call"] = round(q.rows_examined / max(q.calls, 1))
+                    extra["rows_returned_per_call"] = round(q.rows_returned / max(q.calls, 1), 1)
+                display = (
+                    table.name
+                    if sum(t.name == table.name for t in snapshot.tables) == 1
+                    else qualified
+                )
+                findings.append(self._make(snapshot, display, table.size_bytes, columns, **extra))
+        return findings
 
     def _make(self, snapshot, table, size, columns, **extra_evidence) -> Finding:
         col_list = ", ".join(columns)
@@ -106,8 +102,8 @@ class MissingIndexCandidate(Rule):
             evidence={"table_size": fmt_bytes(size), "candidate_columns": col_list}
             | {k: v for k, v in extra_evidence.items() if v is not None},
             suggested_action=(
-                f"Observed scans and filters on {table} suggest investigating ({col_list}). "
-                "A scan may be optimal; confirm index suitability with the actual plan. "
+                f"Captured queries filter {table} on ({col_list}), and scan counters are high. "
+                f"Check the execution plan to determine whether an index on ({col_list}) helps. "
                 + STAGING_NOTE
             ),
             confidence="medium",  # always: only a plan check can prove it (V1, T5.4)
@@ -124,10 +120,14 @@ class UnusedIndex(Rule):
     def evaluate(self, snapshot: Snapshot) -> list[Finding]:
         findings = []
         for idx in snapshot.indexes:
-            if idx.is_primary or idx.is_unique:
+            if idx.is_primary or idx.is_unique or idx.is_constraint:
                 continue  # constraint indexes are never 'unused'
             if snapshot.meta.engine == "postgres":
-                if idx.scans is None or idx.scans != 0 or (idx.size_bytes or 0) < T.i2_min_size_bytes:
+                if (
+                    idx.scans is None
+                    or idx.scans != 0
+                    or (idx.size_bytes or 0) < T.i2_min_size_bytes
+                ):
                     continue
                 size = idx.size_bytes or 0
                 severity = "MEDIUM" if size >= T.i2_medium_size_bytes else "LOW"
@@ -175,7 +175,10 @@ class DuplicateIndex(Rule):
             duplicates = [
                 (idx.table, idx.name, idx.definition, "sys.schema_redundant_indexes")
                 for idx in snapshot.indexes
-                if idx.is_duplicate_candidate and not idx.is_primary and not idx.is_unique
+                if idx.is_duplicate_candidate
+                and not idx.is_primary
+                and not idx.is_unique
+                and not idx.is_constraint
             ]
         for table, name, definition, dominant in duplicates:
             findings.append(
@@ -186,7 +189,7 @@ class DuplicateIndex(Rule):
                     evidence={"redundant_index": definition, "covered_by": dominant},
                     suggested_action=(
                         f"Index {name} is covered by another index with the same leading "
-                        "columns; this is a candidate overlap, not proof of redundancy. "
+                        "columns. It may add avoidable write cost and space. "
                         "Verify with usage stats over a full business cycle, then drop "
                         "the redundant one. " + STAGING_NOTE
                     ),
@@ -200,13 +203,13 @@ class DuplicateIndex(Rule):
         """Leading-column-prefix overlap parsed from indexdef."""
         by_table: dict[str, list] = {}
         for idx in snapshot.indexes:
-            cols = _safe_btree_columns(idx.definition)
+            cols = _index_columns(idx.definition)
             if cols:
                 by_table.setdefault(idx.table, []).append((idx, cols))
         out = []
         for _table, entries in by_table.items():
             for idx_a, cols_a in entries:
-                if idx_a.is_primary or idx_a.is_unique:
+                if idx_a.is_primary or idx_a.is_unique or idx_a.is_constraint:
                     continue
                 for idx_b, cols_b in entries:
                     if idx_a.name == idx_b.name:
@@ -226,29 +229,8 @@ class DuplicateIndex(Rule):
         return out
 
 
-_INDEXDEF_COLS = re.compile(r"\(([^)]*)\)")
-
-
 def _index_columns(definition: str) -> list[str]:
-    """Column list from a PG indexdef or the MySQL '(col1, col2)' form."""
-    m = _INDEXDEF_COLS.search(definition)
-    if not m:
-        return []
-    return [c.strip().strip('`"').split(" ")[0].lower() for c in m.group(1).split(",") if c.strip()]
-
-
-def _safe_btree_columns(definition: str) -> list[str]:
-    """Only plain complete btree definitions support prefix comparisons.
-
-    Partial, expression, INCLUDE, ordering, collation and opclass differences
-    require plan/catalog evidence that this snapshot contract cannot provide.
-    """
-    match = re.fullmatch(
-        r'(?:CREATE\s+(?:UNIQUE\s+)?INDEX\s+\S+\s+ON\s+\S+\s+USING\s+btree\s*)?'
-        r'\(\s*([a-zA-Z_][a-zA-Z_0-9]*(?:\s*,\s*[a-zA-Z_][a-zA-Z_0-9]*)*)\s*\)',
-        definition.strip(), re.IGNORECASE,
-    )
-    return [c.strip() for c in match.group(1).split(',')] if match else []
+    return list(simple_index_columns(definition))
 
 
 def _resolved_table(snapshot: Snapshot, sql: str) -> str | None:

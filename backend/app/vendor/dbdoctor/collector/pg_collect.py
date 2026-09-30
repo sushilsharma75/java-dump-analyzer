@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """dbdoctor PostgreSQL collector.
 
-Reads performance statistics and optional routine/schema metadata (pg_stat_statements, pg_stat_activity,
+Reads performance STATISTICS VIEWS ONLY (pg_stat_statements, pg_stat_activity,
 pg_stat_user_tables, pg_stat_user_indexes, pg_settings, pg_locks) and writes a
 normalized snapshot.json for analysis by dbdoctor.
 
 PRIVACY — what leaves this machine and what never does:
-  * --include-procedures is OPT-IN: routine source retains original literals,
-    comments and identifiers, which may contain secrets. Review before sharing.
-    The SQL normalization guarantees below apply to query statistics only.
   * SQL text is normalized: every string and numeric literal is replaced
     with '?' BEFORE it is written to the output file. pg_stat_statements
     already stores normalized statements; this script adds a second,
-    defense-in-depth stripping pass of its own. No table row data is collected.
+    defense-in-depth stripping pass of its own. No literal values, no row
+    data, and no credentials are ever written to the snapshot.
   * Host and database names are hashed to a short alias by default
     (pass --keep-names to keep them readable).
   * The session is opened READ-ONLY (default_transaction_read_only=on) and
@@ -83,28 +81,114 @@ SETTINGS_WHITELIST = (
 # first, then numbers, then parameter markers, then IN-list collapse.
 # --------------------------------------------------------------------------
 
-_DOLLAR_QUOTED = re.compile(r"\$(?P<tag>[A-Za-z_]*)\$.*?\$(?P=tag)\$", re.DOTALL)
-_ESCAPE_STRING = re.compile(r"[eE]'(?:[^'\\]|\\.|'')*'")
-_SINGLE_QUOTED = re.compile(r"'(?:[^']|'')*'")
-_NUMBER = re.compile(r"(?<![\w$.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])")
-_PARAM_MARKER = re.compile(r"\$\d+\b")
-_IN_LIST = re.compile(r"(\b(?:IN|VALUES)\s*)\(\s*\?(?:\s*,\s*\?)*\s*\)", re.IGNORECASE)
-_WHITESPACE = re.compile(r"\s+")
+# BEGIN SHARED SQL LEXER
+_SQL_WORD = re.compile(r"[\w$]+", re.UNICODE)
+_SQL_NUMBER = re.compile(
+    r"[-+]?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
+)
+_SQL_DOLLAR = re.compile(r"\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$")
+
+
+def sql_tokens(sql: str, mysql: bool = False):
+    """Yield (kind, original text, start, end), omitting whitespace/comments."""
+    i, n = 0, len(sql)
+    while i < n:
+        start = i
+        c = sql[i]
+        if c.isspace():
+            i += 1
+            continue
+        if sql.startswith("--", i) or (mysql and c == "#"):
+            end = sql.find("\n", i)
+            i = n if end < 0 else end + 1
+            continue
+        if sql.startswith("/*", i):
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if sql.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif sql.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            if depth:
+                raise ValueError("Unterminated SQL comment")
+            continue
+        dollar = _SQL_DOLLAR.match(sql, i) if c == "$" and not mysql else None
+        if dollar:
+            end = sql.find(dollar[0], dollar.end())
+            if end < 0:
+                raise ValueError("Unterminated dollar-quoted SQL")
+            i = end + len(dollar[0])
+            yield "BODY", sql[start:i], start, i
+            continue
+        escaped = c in "eE" and i + 1 < n and sql[i + 1] == "'"
+        quote = sql[i + 1] if escaped else c
+        if quote in "'\"`":
+            string = quote == "'" or escaped or (mysql and quote == '"')
+            i += 2 if escaped else 1
+            while i < n:
+                if sql[i] == "\\" and string and (mysql or escaped):
+                    i += 2
+                elif sql[i] == quote:
+                    i += 1
+                    if i < n and sql[i] == quote:
+                        i += 1
+                    else:
+                        break
+                else:
+                    i += 1
+            else:
+                raise ValueError("Unterminated quoted SQL")
+            yield "STRING" if string else "IDENT", sql[start:i], start, i
+            continue
+        if c == "$" and i + 1 < n and sql[i + 1].isdigit():
+            i += 2
+            while i < n and sql[i].isdigit():
+                i += 1
+            yield "PARAM", sql[start:i], start, i
+            continue
+        number = _SQL_NUMBER.match(sql, i)
+        if number:
+            i = number.end()
+            yield "NUMBER", sql[start:i], start, i
+            continue
+        word = _SQL_WORD.match(sql, i)
+        if word:
+            i = word.end()
+            yield "WORD", sql[start:i], start, i
+            continue
+        i += 1
+        yield "SYMBOL", c, start, i
+
+
+def redact_sql(sql: str, mysql: bool = False) -> str:
+    """Remove comments and literal values, preserving identifier spelling."""
+    try:
+        chunks = []
+        end = 0
+        for kind, value, start, stop in sql_tokens(sql, mysql):
+            if start > end:
+                chunks.append(" ")
+            chunks.append("?" if kind in {"STRING", "BODY", "NUMBER", "PARAM"} else value)
+            end = stop
+        result = "".join(chunks).strip()
+        return re.sub(
+            r"(\b(?:IN|VALUES)\s*)\(\s*\?(?:\s*,\s*\?)*\s*\)", r"\1(?)", result, flags=re.IGNORECASE
+        )
+    except ValueError:
+        return "[unparseable SQL redacted]"
+
+
+# END SHARED SQL LEXER
 
 
 def normalize_sql(sql: str) -> str:
-    """Replace every literal in *sql* with '?' and collapse whitespace.
-
-    This runs on the customer machine so that no literal value (which may
-    contain names, emails, tokens...) ever reaches the snapshot file.
-    """
-    out = _DOLLAR_QUOTED.sub("?", sql)
-    out = _ESCAPE_STRING.sub("?", out)
-    out = _SINGLE_QUOTED.sub("?", out)
-    out = _NUMBER.sub("?", out)
-    out = _PARAM_MARKER.sub("?", out)
-    out = _IN_LIST.sub(r"\1(?)", out)
-    return _WHITESPACE.sub(" ", out).strip()
+    out = redact_sql(sql, mysql=False)
+    return out
 
 
 def digest_of(sql: str) -> str:
@@ -126,7 +210,9 @@ def make_host_alias(host: str, dbname: str, keep_names: bool) -> str:
 def collect_queries(cur) -> list[dict]:
     cur.execute(
         """
-        SELECT queryid::text, query, calls, total_exec_time, mean_exec_time, rows
+        SELECT queryid::text || ':' || userid::text || ':' || toplevel::text,
+               query, calls, total_exec_time, mean_exec_time, rows,
+               toplevel, temp_blks_read, temp_blks_written
         FROM pg_stat_statements
         WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
         ORDER BY total_exec_time DESC
@@ -137,6 +223,9 @@ def collect_queries(cur) -> list[dict]:
     return [
         {
             "query_digest": queryid,
+            "is_top_level": top_level,
+            "temp_blocks_read": temp_read,
+            "temp_blocks_written": temp_written,
             "normalized_sql": normalize_sql(query),
             "calls": calls,
             "total_time_ms": round(total_ms, 3),
@@ -150,7 +239,17 @@ def collect_queries(cur) -> list[dict]:
             "time_per_day_ms": None,
             "delta_low_confidence": None,
         }
-        for queryid, query, calls, total_ms, mean_ms, rows in cur.fetchall()
+        for (
+            queryid,
+            query,
+            calls,
+            total_ms,
+            mean_ms,
+            rows,
+            top_level,
+            temp_read,
+            temp_written,
+        ) in cur.fetchall()
     ]
 
 
@@ -194,7 +293,8 @@ def collect_indexes(cur) -> list[dict]:
                pg_get_indexdef(ui.indexrelid),
                pg_relation_size(ui.indexrelid),
                ui.idx_scan,
-               ix.indisprimary, ix.indisunique
+               ix.indisprimary, ix.indisunique,
+               EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = ui.indexrelid)
         FROM pg_stat_user_indexes ui
         JOIN pg_index ix ON ix.indexrelid = ui.indexrelid
         ORDER BY pg_relation_size(ui.indexrelid) DESC
@@ -205,15 +305,16 @@ def collect_indexes(cur) -> list[dict]:
         {
             "table": table,
             "name": name,
-            "definition": definition,
+            "definition": normalize_sql(definition),
             "size_bytes": size,
             "scans": scans,
             "is_primary": is_pk,
+            "is_constraint": is_constraint,
             "is_unique": is_uq,
             "is_duplicate_candidate": False,  # PG: computed downstream from definitions
             "is_unused_candidate": (scans or 0) == 0 and not is_pk,
         }
-        for table, name, definition, size, scans, is_pk, is_uq in cur.fetchall()
+        for table, name, definition, size, scans, is_pk, is_uq, is_constraint in cur.fetchall()
     ]
 
 
@@ -335,6 +436,17 @@ def check_capabilities(cur) -> tuple[list[str], list[str]]:
         caps.append("io_timing")
     else:
         notes.append("track_io_timing is off; I/O timing evidence unavailable (optional).")
+    cur.execute("SELECT current_setting('pg_stat_statements.track', true)")
+    if cur.fetchone()[0] == "all":
+        caps.append("nested_query_stats")
+        notes.append(
+            "Nested and outer statement times overlap; do not sum them as database elapsed time."
+        )
+    else:
+        notes.append(
+            "Nested routine SQL requires pg_stat_statements.track=all; "
+            "definitions alone do not provide runtime evidence."
+        )
     return caps, notes
 
 
@@ -410,8 +522,7 @@ def collect(dsn: str, keep_names: bool, include_procedures: bool = False) -> dic
     with conn, conn.cursor() as cur:
         # belt and braces: verify the session really is read-only
         cur.execute("SHOW default_transaction_read_only")
-        if cur.fetchone()[0] != "on":
-            raise RuntimeError("session is not read-only; refusing to continue")
+        assert cur.fetchone()[0] == "on", "session is not read-only; refusing to continue"
 
         capabilities, notes = check_capabilities(cur)
 

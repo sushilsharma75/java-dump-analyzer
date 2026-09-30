@@ -153,8 +153,12 @@ server-side files. There is no authentication or multi-tenant isolation.
 Choose **Database Analyser** from the top menu, then upload a normalized DBDoctor
 JSON file using **Database Snapshot**. Choose **JVM Analyser** for thread dumps,
 heap dumps, GC logs and source attachment. Try `backend/samples/database/pg_full.json` or `mysql_full.json` first. The
-integration runs locally with the existing backend dependencies; no separate
-DBDoctor service or database connection is needed.
+integration runs locally in the application backend; no separate DBDoctor
+service or database connection is needed. It integrates the
+[`fix/auth-nav-and-reviewer-access` branch](https://github.com/sushilsharma75/dbdoctor/tree/fix/auth-nav-and-reviewer-access).
+Database Analyser opens directly: there is no JWT authentication, login or
+registration page, browser token, or reviewer account requirement. Install the
+updated backend requirements (SQLGlot and Jinja2) and restart the backend.
 
 1. Download the PostgreSQL or MySQL/MariaDB Python collector from the upload panel.
    Run it inside your database environment with a read-only account and the driver
@@ -168,12 +172,42 @@ DBDoctor service or database connection is needed.
 4. Inspect coverage, query/index/operations/configuration/maintenance findings,
    measured evidence and confidence. The score ranks observed findings; even 100
    does not certify database health when evidence is absent.
-5. Export HTML or the complete JSON. Database analyses use the same persistent
+5. Export the DBDoctor HTML report, use **Print / save PDF** for a PDF from the
+   browser, download **Export tasks** for Markdown tickets, or export the complete
+   JSON. Database analyses use the same persistent
    saved-history list as JVM analyses and survive restarts.
 6. For JVM/database leads, analyze or reopen a thread dump, save its capture time,
    then open the database report. Confirm that the JVM connects to this database
    in the same incident. Captures more than five minutes apart are rejected.
    Driver/pool stacks provide investigation context, not proof of SQL causality.
+
+### Schema and procedure SQL from the integrated branch
+
+Upload a **Combined DDL file — table schema and stored procedures** alongside a
+current snapshot. A single `.sql` or `.ddl` file can contain tables, indexes,
+views and multiple procedures/functions together; the analyser separates the
+definitions automatically. Separate schema and procedure files are not required.
+PostgreSQL dollar-quoted routine bodies and MySQL/MariaDB `DELIMITER` scripts
+are supported. Multiple files are also accepted when your export uses them.
+The limit is 20 UTF-8 files / 5 MiB combined. For SQL-only inspection, omit the
+snapshot and select PostgreSQL, MySQL or MariaDB. A baseline requires a current
+snapshot. Optional **Database name** labels the report without changing capture
+identity used for baseline comparison.
+
+The report shows table columns and keys, indexes, foreign-key dependencies,
+views, procedure parameters, local declarations and assignment locations,
+temporary-table reads/writes/drops, loop/branch and dynamic SQL sites, static
+statements, and unresolved parser cases. **Export schema JSON** downloads the
+catalog. Uploaded DDL is parsed without execution and its original bytes are not
+saved; literal defaults and routine string bodies are excluded from the derived
+catalog. Identifiers remain visible. SQL-only reports have no health score or
+JVM capture correlation because no workload was observed.
+
+Query and index SQL is redacted again at upload. The collectors also capture
+PostgreSQL top-level/nested statement status and executor spill blocks, and
+MySQL routine call/timing summaries when instrumentation permits. These are
+observations, not inferred temporary-table sizes or proven speed improvements.
+SQL Server/T-SQL is not supported by this upstream branch.
 
 Stored procedure/function analysis is available for the existing PostgreSQL,
 MySQL and MariaDB engines. Run the collector with `--include-procedures`, then
@@ -214,14 +248,17 @@ executed. Baseline rates may be uncertain after resets or digest eviction, and
 query time percentages cover captured statements only.
 
 ```text
-POST /api/analyze/database             multipart file, optional baseline
+POST /api/analyze/database             optional file/baseline, repeated ddl, engine, client_alias
 GET  /api/database/collectors/{name}   pg_collect.py, mysql_collect.py, delta.py
+GET  /api/database/{id}/report         fmt=html|tasks|schema|json
 POST /api/correlate/database           database_id, thread_id, same_incident_confirmed
 ```
 
 The original DBDoctor repository was downloaded to `integrations/dbdoctor/`.
 Runtime code is embedded under `backend/app/vendor/dbdoctor/` at revision
-`59160ccb1878c8c3f3d355ed64abda2335dc4aa9`, with diagnostic corrections.
+`476fa2dd87f4299066599f9c93d67d169902468e`, with retained diagnostic corrections.
+See [integration provenance](backend/app/vendor/dbdoctor/UPSTREAM.md) for the
+embedded modules and the mapping to this application.
 See [the DBDoctor review](docs/DBDOCTOR_REVIEW.md) for findings, implemented fixes,
 maintenance guidance and remaining evidence boundaries. Its hosted billing/auth
 service is not part of this trusted-host integration. Existing `postmortem` storage

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Database Performance Audit — {{ client_alias }}</title>
+<style>
+  :root {
+    --critical: #b3261e; --high: #d4560f; --medium: #a07400;
+    --low: #4a6741; --info: #46617a; --ink: #1c1c1c; --muted: #6a6a6a;
+    --line: #d9d5cd; --card: #faf9f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--ink); margin: 0; font-size: 11pt; line-height: 1.5;
+  }
+  code, td.num, .evidence td, .mono {
+    font-family: 'Courier New', Courier, monospace; font-size: 9.5pt;
+  }
+  h1 { font-size: 26pt; margin: 0 0 4px; font-weight: normal; }
+  h2 {
+    font-size: 15pt; border-bottom: 2px solid var(--ink);
+    padding-bottom: 4px; margin: 28px 0 12px; page-break-after: avoid;
+  }
+  h3 { font-size: 12pt; margin: 16px 0 6px; page-break-after: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th { text-align: left; border-bottom: 1.5px solid var(--ink); padding: 4px 8px 4px 0; font-size: 9.5pt; }
+  td { border-bottom: 0.5px solid var(--line); padding: 4px 8px 4px 0; vertical-align: top; }
+  td.num { text-align: right; white-space: nowrap; }
+  td.mono { overflow-wrap: anywhere; word-break: break-word; }
+  .muted { color: var(--muted); }
+  .small { font-size: 9pt; }
+
+  /* cover */
+  .cover { padding: 40px 0 10px; }
+  .cover .brand { letter-spacing: 3px; text-transform: uppercase; font-size: 10pt; color: var(--muted); }
+  .cover-meta { margin-top: 10px; color: var(--muted); }
+  .scorewrap { display: flex; align-items: center; gap: 28px; margin: 26px 0 8px; }
+  .scoretext .value { font-size: 34pt; }
+
+  /* severity chips */
+  .chip {
+    display: inline-block; padding: 1px 8px; border-radius: 3px;
+    color: #fff; font-size: 8.5pt; font-family: Helvetica, Arial, sans-serif;
+    letter-spacing: 1px; vertical-align: middle;
+  }
+  .chip.CRITICAL { background: var(--critical); } .chip.HIGH { background: var(--high); }
+  .chip.MEDIUM { background: var(--medium); } .chip.LOW { background: var(--low); }
+  .chip.INFO { background: var(--info); }
+
+  /* finding cards */
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    padding: 14px 16px; margin: 12px 0; page-break-inside: avoid;
+  }
+  .card .obj {
+    font-weight: bold;
+    white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  }
+  .banner {
+    background: #fdf3e0; border-left: 4px solid var(--medium);
+    padding: 6px 10px; margin: 8px 0; font-size: 9.5pt;
+  }
+  .evidence { margin: 8px 0; }
+  .evidence td:first-child { color: var(--muted); width: 40%; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--info); font-size: 9.5pt; }
+  details pre {
+    background: #f1efe9; padding: 10px; font-size: 8.5pt; overflow-x: auto;
+    white-space: pre-wrap;
+  }
+
+  ol.plan li { margin-bottom: 8px; }
+  .pagebreak { page-break-before: always; }
+  @page { size: A4; margin: 18mm 16mm 20mm; }
+</style>
+</head>
+<body>
+
+<!-- 1 · cover -->
+<div class="cover">
+  <div class="brand">dbdoctor · database performance audit</div>
+  <h1>{{ client_alias }}</h1>
+  <div class="cover-meta">
+    Engine: <strong>{{ engine_label }}</strong> {{ server_version or '' }} ·
+    Collected: {{ collected_at.strftime('%d %b %Y %H:%M UTC') }} ·
+    Database size: {{ db_size or 'n/a' }}
+  </div>
+
+  {% if score is not none %}
+  <div class="scorewrap">
+    <svg width="130" height="130" viewBox="0 0 130 130" role="img" aria-label="health score">
+      <circle cx="65" cy="65" r="54" fill="none" stroke="#e8e5de" stroke-width="14"/>
+      <circle cx="65" cy="65" r="54" fill="none" stroke="{{ score_color }}" stroke-width="14"
+              stroke-linecap="round" stroke-dasharray="{{ '%.1f' % (score * 3.393) }} 339.3"
+              transform="rotate(-90 65 65)"/>
+      <text x="65" y="72" text-anchor="middle" font-size="30" font-family="Georgia">{{ score }}</text>
+      <text x="65" y="90" text-anchor="middle" font-size="9" fill="#6a6a6a">/ 100</text>
+    </svg>
+    <div class="scoretext">
+      <div class="value">Health score: {{ score }}</div>
+      <div class="muted">
+        {% for cat, pts in deductions.items() if pts %}{{ cat }} −{{ pts }}{{ ", " if not loop.last }}{% endfor %}
+      </div>
+    </div>
+  </div>
+{% endif %}
+</div>
+{% if score is none %}<p>Health score unavailable: insufficient evidence.</p>{% endif %}
+
+<!-- 2 · executive summary -->
+<h2>Executive summary</h2>
+<p class="small muted">Observation coverage: {% for name, state in coverage.items() %}{{ name }}: {{ state }}{{ "; " if not loop.last }}{% endfor %}. Missing data is not a passed check.</p>
+<ul>
+  {% for bullet in summary_bullets %}<li>{{ bullet }}</li>{% endfor %}
+</ul>
+
+<!-- 3 · top issues -->
+<h2>Top {{ top_findings | length }} issues</h2>
+{% for f in top_findings %}
+<div class="card">
+  <div>
+    <span class="chip {{ f.severity }}">{{ f.severity }}</span>
+    &nbsp;<span class="mono small muted">{{ f.rule_id }}</span>
+  </div>
+  <h3>{{ loop.index }}. {{ f.title }}</h3>
+  <div class="obj mono">{{ f.affected_object }}</div>
+  <table class="evidence">
+    {% for k, v in f.evidence.items() %}
+    <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
+    {% endfor %}
+  </table>
+  <p>{{ ai_texts.get(finding_keys[loop.index0], f.suggested_action) }}</p>
+  {% if f.confidence != 'high' %}
+  <div class="banner">⚠ Confidence: {{ f.confidence }} — test this change in staging before applying it to production.</div>
+  {% endif %}
+  {% if tickets.get(finding_keys[loop.index0]) %}
+  <details>
+    <summary>Copy as ticket (GitHub / Jira markdown)</summary>
+    <pre>{{ tickets[finding_keys[loop.index0]] }}</pre>
+  </details>
+  {% endif %}
+</div>
+{% endfor %}
+
+<!-- 4 · slow queries -->
+<h2 class="pagebreak">Slow queries</h2>
+{% if slow_queries %}
+<table>
+  <tr><th>Statement (normalized)</th><th>Calls</th><th>Total ms</th><th>Mean ms</th><th>% of captured time</th></tr>
+  {% for q in slow_queries %}
+  <tr>
+    <td class="mono">{{ q.sql }}</td>
+    <td class="num">{{ '{:,}'.format(q.calls) }}</td>
+    <td class="num">{{ '{:,.0f}'.format(q.total_ms) }}</td>
+    <td class="num">{{ '%.2f' % q.mean_ms }}</td>
+    <td class="num">{{ '%.1f' % q.pct }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small muted">Top statements by cumulative execution time since statistics were last reset. All literals are stripped before data leaves your environment.</p>
+{% else %}
+<p class="muted">Per-query statistics were not available on this run ({{ 'pg_stat_statements' if engine == 'postgres' else 'performance_schema' }} disabled — see capability notes).</p>
+{% endif %}
+
+<!-- 5 · index advisor -->
+<h2>Index advisor</h2>
+{% if index_findings %}
+<table>
+  <tr><th>Severity</th><th>Finding</th><th>Object</th><th>Evidence</th></tr>
+  {% for f in index_findings %}
+  <tr>
+    <td><span class="chip {{ f.severity }}">{{ f.severity }}</span></td>
+    <td>{{ f.title }}</td>
+    <td class="mono">{{ f.affected_object }}</td>
+    <td class="small">{% for k, v in f.evidence.items() %}{{ k }}={{ v }}{{ '; ' if not loop.last }}{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No index problems detected among the captured tables and queries.</p>
+{% endif %}
+
+<!-- 6 · growth & operational risk -->
+<h2>Growth &amp; operational risk</h2>
+{% if connections %}
+<p>Connections at collection time: <strong>{{ connections.current }}</strong>
+   {% if connections.peak is not none %} (peak since restart: {{ connections.peak }}){% endif %}
+   of <strong>{{ connections.max_limit }}</strong> allowed.</p>
+{% endif %}
+{% if ops_findings %}
+<table>
+  <tr><th>Severity</th><th>Finding</th><th>Object</th><th>Evidence</th></tr>
+  {% for f in ops_findings %}
+  <tr>
+    <td><span class="chip {{ f.severity }}">{{ f.severity }}</span></td>
+    <td>{{ f.title }}</td>
+    <td class="mono">{{ f.affected_object }}</td>
+    <td class="small">{% for k, v in f.evidence.items() %}{{ k }}={{ v }}{{ '; ' if not loop.last }}{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No lock, connection, or growth risks detected on this run.</p>
+{% endif %}
+
+<!-- 7 · engine-specific health -->
+{% if engine == 'postgres' %}
+<h2>Vacuum health (PostgreSQL)</h2>
+<table>
+  <tr><th>Table</th><th>Size</th><th>Dead tuples %</th><th>Last autovacuum</th></tr>
+  {% for t in engine_health_rows %}
+  <tr>
+    <td class="mono">{{ t.name }}</td>
+    <td class="num">{{ t.size }}</td>
+    <td class="num">{{ t.dead_pct }}</td>
+    <td>{{ t.last_autovacuum }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<h2>InnoDB health (MySQL)</h2>
+<table>
+  <tr><th>Table</th><th>Size</th><th>Reclaimable (data_free)</th><th>Rows (est.)</th></tr>
+  {% for t in engine_health_rows %}
+  <tr>
+    <td class="mono">{{ t.name }}</td>
+    <td class="num">{{ t.size }}</td>
+    <td class="num">{{ t.data_free }}</td>
+    <td class="num">{{ t.rows }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<!-- 8 · configuration findings -->
+<h2>Configuration findings</h2>
+{% if config_findings %}
+{% for f in config_findings %}
+<div class="card">
+  <span class="chip {{ f.severity }}">{{ f.severity }}</span>
+  <strong>&nbsp;{{ f.affected_object }}</strong>
+  <table class="evidence">
+    {% for k, v in f.evidence.items() %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+  </table>
+  <p class="small">{{ f.suggested_action }}</p>
+</div>
+{% endfor %}
+{% else %}
+<p class="muted">No configuration problems detected among the checked settings.</p>
+{% endif %}
+
+{% if routine_stats %}
+<h2>Observed stored-program performance</h2>
+<p>MySQL cumulative instrumentation. Nested time can overlap outer execution time; do not add them.</p>
+<table><tr><th>Routine</th><th>Calls</th><th>Total ms</th><th>Nested statements</th><th>Nested ms</th></tr>
+{% for r in routine_stats %}<tr><td>{{ r.name }} ({{ r.kind }})</td><td>{{ r.calls }}</td><td>{{ r.total_time_ms }}</td><td>{{ r.nested_statements }}</td><td>{{ r.nested_time_ms }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% if schema_catalog %}
+<h2>Schema and stored procedure analysis</h2>
+<p>{{ schema_catalog.tables | length }} tables, {{ schema_catalog.indexes | length }} indexes,
+{{ schema_catalog.views | length }} views and {{ schema_catalog.routines | length }} routines
+from {{ schema_catalog.source_count }} DDL files.</p>
+<ul>{% for note in schema_catalog.limitations + schema_catalog.warnings %}<li>{{ note }}</li>{% endfor %}</ul>
+{% for routine in schema_catalog.routines %}
+<div class="card">
+<h3>{{ routine.name }} ({{ routine.kind }}, {{ routine.language }})</h3>
+<p>DDL file {{ routine.source_file }}, line {{ routine.line }}.
+Dependencies: {{ routine.dependencies | join(', ') or 'none resolved' }}.</p>
+<p>Loop sites: {{ routine.loop_lines | join(', ') or 'none detected' }};
+branch sites: {{ routine.branch_lines | join(', ') or 'none detected' }};
+dynamic SQL sites: {{ routine.dynamic_sql_lines | join(', ') or 'none detected' }}.</p>
+{% if routine.parameters or routine.variables %}
+<h4>Parameters and local variables</h4>
+<table><tr><th>Name</th><th>Kind / type</th><th>Declaration line</th><th>Lexical occurrences</th><th>Assignment lines</th></tr>
+{% for v in routine.parameters + routine.variables %}
+<tr><td>{{ v.name }}</td><td>{{ v.kind }} / {{ v.data_type }}</td><td>{{ v.declaration_line }}</td><td>{{ v.occurrences }}</td><td>{{ v.assignment_lines | join(', ') }}</td></tr>
+{% endfor %}</table>
+{% endif %}
+{% if routine.temporary_tables %}
+<h4>Temporary tables</h4>
+<table><tr><th>Name</th><th>Created at line</th><th>Columns / indexes</th><th>Read / write / drop lines</th></tr>
+{% for t in routine.temporary_tables %}
+<tr><td>{{ t.name }}</td><td>{{ t.creation_line }}</td><td>{{ t.columns | join(', ') or 'derived/unknown' }} / {{ t.indexes | join(', ') or 'none detected' }}</td><td>{{ t.read_lines | join(', ') }} / {{ t.write_lines | join(', ') }} / {{ t.drop_lines | join(', ') }}</td></tr>
+{% endfor %}</table>
+{% endif %}
+{% if routine.statements %}
+<h4>Static statements</h4>
+<table><tr><th>Line</th><th>Normalized SQL</th><th>Parsed</th></tr>
+{% for statement in routine.statements %}<tr><td>{{ statement.line }}</td><td class="mono">{{ statement.normalized_sql }}</td><td>{{ 'yes' if statement.parsed else 'no — review required' }}</td></tr>{% endfor %}</table>
+{% endif %}
+<ul>{% for note in routine.limitations %}<li>{{ note }}</li>{% endfor %}</ul>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- 9 · developer action plan -->
+<h2>Developer action plan</h2>
+<ol class="plan">
+  {% for step in action_plan %}<li>{{ step }}</li>{% endfor %}
+</ol>
+<p class="small muted">Every recommendation above should be validated in a staging environment first.
+Capabilities on this run: {{ capabilities | join(', ') }}.
+{% if capability_notes %}Notes: {{ capability_notes | join(' ') }}{% endif %}</p>
+
+{% if integration %}
+<section class="page-break">
+  <h2>Evidence coverage and limitations</h2>
+  <table><thead><tr><th>Section</th><th>Status</th><th>Records</th></tr></thead><tbody>
+  {% for item in integration.coverage %}<tr><td>{{ item.section }}</td><td>{{ item.status }}</td><td>{{ item.count }}</td></tr>{% endfor %}
+  </tbody></table>
+  <ul>{% for note in integration.limitations %}<li>{{ note }}</li>{% endfor %}</ul>
+  <h2>All diagnostic findings</h2>
+  {% for finding in integration.findings %}
+  <article><h3>{{ finding.severity }} · {{ finding.title }}</h3>
+  <p>{{ finding.evidence_id }} · {{ finding.rule_id }} · {{ finding.affected_object }} · Confidence: {{ finding.confidence }}</p>
+  <pre>{{ finding.evidence | tojson(indent=2) }}</pre><p>{{ finding.suggested_action }}</p></article>
+  {% endfor %}
+</section>
+{% endif %}
+</body>
+</html>

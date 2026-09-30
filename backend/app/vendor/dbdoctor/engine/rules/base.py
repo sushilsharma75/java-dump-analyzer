@@ -7,7 +7,6 @@ and safe to run anywhere.
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from typing import ClassVar, Literal
 
@@ -92,27 +91,18 @@ def register(cls: type[Rule]) -> type[Rule]:
 # Shared helpers for rules that inspect normalized SQL
 # --------------------------------------------------------------------------
 
-_FROM_TABLE = re.compile(r"\bFROM\s+[`\"]?(\w+)[`\"]?", re.IGNORECASE)
-_EQ_FILTER = re.compile(
-    r"\b(?:WHERE|AND|ON)\s+(?:[`\"]?\w+[`\"]?\.)?[`\"]?(\w+)[`\"]?\s*=\s*\?",
-    re.IGNORECASE,
-)
-
 
 def table_of(normalized_sql: str) -> str | None:
-    """First FROM-table of a normalized statement (simple queries only)."""
-    m = _FROM_TABLE.search(normalized_sql)
-    return m.group(1).lower() if m else None
+    from app.vendor.dbdoctor.engine.sql_analysis import filter_candidates
+
+    candidates = filter_candidates(normalized_sql)
+    return candidates[0][0] if len(candidates) == 1 else None
 
 
 def equality_filter_columns(normalized_sql: str) -> list[str]:
-    """Columns compared by equality to a parameter (WHERE col = ?)."""
-    seen: list[str] = []
-    for col in _EQ_FILTER.findall(normalized_sql):
-        col = col.lower()
-        if col not in seen:
-            seen.append(col)
-    return seen
+    from app.vendor.dbdoctor.engine.sql_analysis import filter_candidates
+
+    return list(dict.fromkeys(c for _, cols in filter_candidates(normalized_sql) for c in cols))
 
 
 def fmt_bytes(n: float) -> str:

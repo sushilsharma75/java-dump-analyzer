@@ -87,8 +87,15 @@ class SnapshotMeta(BaseModel):
     )
 
 
+from .schema import SchemaCatalog
+
+
 class QueryStat(BaseModel):
     """One normalized statement's cumulative statistics."""
+
+    is_top_level: bool | None = None
+    temp_blocks_read: int | None = None
+    temp_blocks_written: int | None = None
 
     query_digest: str = Field(
         description="Stable identifier of the normalized statement. PG: pg_stat_statements.queryid (text). MySQL: events_statements_summary_by_digest.DIGEST."
@@ -182,6 +189,8 @@ class TableStat(BaseModel):
 
 class IndexStat(BaseModel):
     """One index's definition and usage statistics."""
+
+    is_constraint: bool = False
 
     table: str = Field(
         description="Qualified table the index belongs to (schema.table). PG: pg_stat_user_indexes. MySQL: information_schema.statistics / sys schema views."
@@ -305,9 +314,22 @@ class StoredProcedure(BaseModel):
     parameters: list[RoutineParameter] = Field(default_factory=list, max_length=1000)
 
 
+class RoutineStat(BaseModel):
+    """Runtime summaries from MySQL stored-program instrumentation."""
+
+    name: str
+    kind: str
+    calls: int
+    total_time_ms: float
+    nested_statements: int
+    nested_time_ms: float
+
+
 class Snapshot(BaseModel):
     """Root document: one normalized collection run from one database."""
 
+    routine_stats: list[RoutineStat] = Field(default_factory=list)
+    schema_catalog: SchemaCatalog | None = None
     procedures: list[StoredProcedure] = Field(default_factory=list, max_length=1000)
     columns: list[ColumnDefinition] = Field(default_factory=list, max_length=20000)
     meta: SnapshotMeta = Field(description="Provenance + capabilities. Both engines.")

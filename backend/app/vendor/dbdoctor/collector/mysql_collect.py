@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """dbdoctor MySQL/MariaDB collector.
 
-Reads performance statistics and optional routine/schema metadata (performance_schema statement digests,
+Reads performance STATISTICS VIEWS ONLY (performance_schema statement digests,
 sys schema advisor views, information_schema.tables/statistics, processlist,
 global variables/status) and writes a normalized snapshot.json for analysis
 by dbdoctor.
 
 PRIVACY — what leaves this machine and what never does:
-  * --include-procedures is OPT-IN: routine source retains original literals,
-    comments and identifiers, which may contain secrets. Review before sharing.
-    The SQL normalization guarantees below apply to query statistics only.
   * Statement text comes from performance_schema DIGEST_TEXT, which the
     server has ALREADY normalized (every literal replaced by '?') before we
-    read it. Currently running statements in the processlist are passed through
-    this script's literal-stripping pass before writing query statistics.
+    read it. The only raw SQL this script can see — currently running
+    statements in the processlist — is passed through this script's own
+    literal-stripping pass before anything is written.
   * Host and database names are hashed to a short alias by default
     (pass --keep-names to keep them readable).
   * The session is opened READ-ONLY (SET SESSION TRANSACTION READ ONLY) and
@@ -97,22 +95,114 @@ STATUS_WHITELIST = (
 # in depth. Order: strings, numbers, IN-list collapse, whitespace.
 # --------------------------------------------------------------------------
 
-_BACKSLASH_STRING = re.compile(r"'(?:[^'\\]|\\.|'')*'")
-_DOUBLE_QUOTED = re.compile(r'"(?:[^"\\]|\\.|"")*"')
-_NUMBER = re.compile(r"(?<![\w$.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])")
-_IN_LIST = re.compile(r"(\b(?:IN|VALUES)\s*)\(\s*\?(?:\s*,\s*\?)*\s*\)", re.IGNORECASE)
-_IN_LIST_ELLIPSIS = re.compile(r"\(\s*\?\s*,\s*\.\.\.\s*\)")  # MySQL digests: (?, ...)
-_WHITESPACE = re.compile(r"\s+")
+# BEGIN SHARED SQL LEXER
+_SQL_WORD = re.compile(r"[\w$]+", re.UNICODE)
+_SQL_NUMBER = re.compile(
+    r"[-+]?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
+)
+_SQL_DOLLAR = re.compile(r"\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$")
+
+
+def sql_tokens(sql: str, mysql: bool = False):
+    """Yield (kind, original text, start, end), omitting whitespace/comments."""
+    i, n = 0, len(sql)
+    while i < n:
+        start = i
+        c = sql[i]
+        if c.isspace():
+            i += 1
+            continue
+        if sql.startswith("--", i) or (mysql and c == "#"):
+            end = sql.find("\n", i)
+            i = n if end < 0 else end + 1
+            continue
+        if sql.startswith("/*", i):
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if sql.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif sql.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            if depth:
+                raise ValueError("Unterminated SQL comment")
+            continue
+        dollar = _SQL_DOLLAR.match(sql, i) if c == "$" and not mysql else None
+        if dollar:
+            end = sql.find(dollar[0], dollar.end())
+            if end < 0:
+                raise ValueError("Unterminated dollar-quoted SQL")
+            i = end + len(dollar[0])
+            yield "BODY", sql[start:i], start, i
+            continue
+        escaped = c in "eE" and i + 1 < n and sql[i + 1] == "'"
+        quote = sql[i + 1] if escaped else c
+        if quote in "'\"`":
+            string = quote == "'" or escaped or (mysql and quote == '"')
+            i += 2 if escaped else 1
+            while i < n:
+                if sql[i] == "\\" and string and (mysql or escaped):
+                    i += 2
+                elif sql[i] == quote:
+                    i += 1
+                    if i < n and sql[i] == quote:
+                        i += 1
+                    else:
+                        break
+                else:
+                    i += 1
+            else:
+                raise ValueError("Unterminated quoted SQL")
+            yield "STRING" if string else "IDENT", sql[start:i], start, i
+            continue
+        if c == "$" and i + 1 < n and sql[i + 1].isdigit():
+            i += 2
+            while i < n and sql[i].isdigit():
+                i += 1
+            yield "PARAM", sql[start:i], start, i
+            continue
+        number = _SQL_NUMBER.match(sql, i)
+        if number:
+            i = number.end()
+            yield "NUMBER", sql[start:i], start, i
+            continue
+        word = _SQL_WORD.match(sql, i)
+        if word:
+            i = word.end()
+            yield "WORD", sql[start:i], start, i
+            continue
+        i += 1
+        yield "SYMBOL", c, start, i
+
+
+def redact_sql(sql: str, mysql: bool = False) -> str:
+    """Remove comments and literal values, preserving identifier spelling."""
+    try:
+        chunks = []
+        end = 0
+        for kind, value, start, stop in sql_tokens(sql, mysql):
+            if start > end:
+                chunks.append(" ")
+            chunks.append("?" if kind in {"STRING", "BODY", "NUMBER", "PARAM"} else value)
+            end = stop
+        result = "".join(chunks).strip()
+        return re.sub(
+            r"(\b(?:IN|VALUES)\s*)\(\s*\?(?:\s*,\s*\?)*\s*\)", r"\1(?)", result, flags=re.IGNORECASE
+        )
+    except ValueError:
+        return "[unparseable SQL redacted]"
+
+
+# END SHARED SQL LEXER
 
 
 def normalize_sql(sql: str) -> str:
-    """Replace every literal in *sql* with '?' and collapse whitespace."""
-    out = _BACKSLASH_STRING.sub("?", sql)
-    out = _DOUBLE_QUOTED.sub("?", out)
-    out = _NUMBER.sub("?", out)
-    out = _IN_LIST.sub(r"\1(?)", out)
-    out = _IN_LIST_ELLIPSIS.sub("(?)", out)
-    return _WHITESPACE.sub(" ", out).strip()
+    out = redact_sql(sql, mysql=True)
+    return re.sub(r"\(\s*\?\s*,\s*\.\.\.\s*\)", "(?)", out)
 
 
 def digest_of(sql: str) -> str:
@@ -286,6 +376,41 @@ def collect_queries(cur, db: str, has_quantiles: bool) -> list[dict]:
             q99,
         ) in cur.fetchall()
     ]
+
+
+def collect_routines(cur, db: str, capabilities: list[str], notes: list[str]) -> list[dict]:
+    """Optional stored-program aggregates; unavailable instrumentation is explicit."""
+    try:
+        cur.execute(
+            "SELECT OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE, COUNT_STAR, SUM_TIMER_WAIT, "
+            "COUNT_STATEMENTS, SUM_STATEMENTS_WAIT "
+            "FROM performance_schema.events_statements_summary_by_program "
+            "WHERE OBJECT_SCHEMA = %s ORDER BY SUM_TIMER_WAIT DESC LIMIT %s",
+            (db, TOP_QUERIES),
+        )
+        rows = cur.fetchall()
+        capabilities.append("routine_stats")
+        if not rows:
+            notes.append(
+                "No stored-program observations; verify setup_objects instrumentation "
+                "and workload coverage."
+            )
+        return [
+            {
+                "name": f"{schema}.{name}",
+                "kind": kind.lower(),
+                "calls": calls,
+                "total_time_ms": round(total / PS, 3),
+                "nested_statements": nested,
+                "nested_time_ms": round(nested_time / PS, 3),
+            }
+            for schema, name, kind, calls, total, nested, nested_time in rows
+        ]
+    except Exception:
+        notes.append(
+            "Stored-program statistics unavailable; verify instrumentation and read grants."
+        )
+        return []
 
 
 def collect_tables(cur, db: str, sys_available: bool) -> list[dict]:
@@ -514,8 +639,7 @@ def collect(dsn: str, keep_names: bool, include_procedures: bool = False) -> dic
         cur.execute("SELECT @@transaction_read_only")
     except pymysql.err.OperationalError:
         cur.execute("SELECT @@tx_read_only")  # older MariaDB spelling
-    if cur.fetchone()[0] != 1:
-        raise RuntimeError("session is not read-only; refusing to continue")
+    assert cur.fetchone()[0] == 1, "session is not read-only; refusing to continue"
 
     cur.execute("SELECT VERSION()")
     server_version = cur.fetchone()[0]
@@ -560,6 +684,7 @@ def collect(dsn: str, keep_names: bool, include_procedures: bool = False) -> dic
             "capability_notes": notes,
         },
         "queries": collect_queries(cur, db, has_quantiles) if "query_stats" in capabilities else [],
+        "routine_stats": collect_routines(cur, db, capabilities, notes),
         "tables": collect_tables(cur, db, sys_available),
         "indexes": collect_indexes(cur, db, sys_available),
         "sessions": collect_sessions(cur),

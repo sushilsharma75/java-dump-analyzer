@@ -608,7 +608,9 @@ def parse_heap_dump(
             try:
                 from .heap_graph import trace_retention
                 stage("Tracing retention")
-                rf = trace_retention(fp, leaf, source=source)
+                rf = trace_retention(fp, leaf, source=source,
+                                     index_path=index_path if indexed else None,
+                                     stage_callback=stage)
                 if rf:
                     findings = [f for f in findings if f.title != "No obvious red flags"]
                     findings.insert(0, rf)

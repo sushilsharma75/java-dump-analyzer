@@ -24,6 +24,10 @@ _PRIM_ETYPE = {"boolean": 4, "char": 5, "float": 6, "double": 7,
                "byte": 8, "short": 9, "int": 10, "long": 11}
 
 
+class _TraceComplete(Exception):
+    """Stop a pass once its sample or first terminal is determined."""
+
+
 def _open(fp: BinaryIO) -> Tuple[_Reader, int]:
     """Seek to start, parse the hprof header, return a reader at the first record."""
     fp.seek(0)
@@ -80,7 +84,7 @@ def _parse_class_dump(reader: _Reader, id_size: int):
 
 def _walk(reader: _Reader, id_size: int, *, on_utf8=None, on_load_class=None,
           on_class=None, on_root=None, on_instance=None, on_objarray=None,
-          on_primarray=None) -> None:
+          on_primarray=None, on_instance_header=None, on_progress=None) -> None:
     """Walk every top-level record, dispatching to the provided callbacks.
 
     Object/array bodies are only read when the matching callback is given;
@@ -96,7 +100,8 @@ def _walk(reader: _Reader, id_size: int, *, on_utf8=None, on_load_class=None,
         if tag in (TAG_HEAP_DUMP, TAG_HEAP_DUMP_SEGMENT):
             seg_end = reader.pos + length
             _walk_segment(reader, seg_end, id_size, on_class, on_root,
-                          on_instance, on_objarray, on_primarray)
+                          on_instance, on_objarray, on_primarray,
+                          on_instance_header, on_progress)
         elif tag == TAG_UTF8:
             sid = reader.id(id_size)
             data = reader.read(length - id_size)
@@ -114,18 +119,24 @@ def _walk(reader: _Reader, id_size: int, *, on_utf8=None, on_load_class=None,
 
 
 def _walk_segment(reader, seg_end, id_size, on_class, on_root,
-                  on_instance, on_objarray, on_primarray) -> None:
+                  on_instance, on_objarray, on_primarray,
+                  on_instance_header=None, on_progress=None) -> None:
+    instance_header = struct.Struct(">QIQI" if id_size == 8 else ">IIII")
+    array_header = struct.Struct(">QIIQ" if id_size == 8 else ">IIII")
+    primitive_header = struct.Struct(">QIIB" if id_size == 8 else ">IIIB")
+    objects = 0
     while reader.pos < seg_end:
         sub = reader.u1()
         if sub == HEAP_INSTANCE_DUMP:
-            oid = reader.id(id_size); reader.u4(); cid = reader.id(id_size)
-            nbytes = reader.u4()
+            oid, _, cid, nbytes = instance_header.unpack(reader.read(instance_header.size))
+            if on_instance_header:
+                on_instance_header(oid, cid)
             if on_instance:
                 on_instance(oid, cid, reader.read(nbytes))
             else:
                 reader.skip(nbytes)
         elif sub == HEAP_OBJECT_ARRAY_DUMP:
-            oid = reader.id(id_size); reader.u4(); n = reader.u4(); elem = reader.id(id_size)
+            oid, _, n, elem = array_header.unpack(reader.read(array_header.size))
             if on_objarray:
                 # Callbacks may stop after a match; consume the remaining payload
                 # without materializing millions of array entries.
@@ -145,7 +156,7 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
             else:
                 reader.skip(n * id_size)
         elif sub == HEAP_PRIMITIVE_ARRAY_DUMP:
-            oid = reader.id(id_size); reader.u4(); n = reader.u4(); t = reader.u1()
+            oid, _, n, t = primitive_header.unpack(reader.read(primitive_header.size))
             if on_primarray:
                 on_primarray(oid, t, n)
             reader.skip(n * TYPE_SIZES.get(t, 0))
@@ -184,10 +195,14 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
             raise ValueError(f"Unsupported HPROF heap tag {sub:#x} at {reader.pos - 1}")
         if reader.pos > seg_end:
             raise ValueError("Heap subrecord exceeds segment")
+        objects += 1
+        if on_progress and objects % 1_000_000 == 0:
+            on_progress(reader.pos)
 
 
 class _Tracer:
-    def __init__(self, fp: BinaryIO, sample_cap: int = 2000, max_levels: int = 6):
+    def __init__(self, fp: BinaryIO, sample_cap: int = 2000, max_levels: int = 6,
+                 stage_callback=None):
         self.fp = fp
         self.sample_cap = sample_cap
         self.max_levels = max_levels
@@ -200,10 +215,14 @@ class _Tracer:
         self.id_size = 8
         self._layout_cache: Dict[int, List[Tuple[int, int, bool]]] = {}
         self.class_name_by_id: Dict[int, str] = {}
+        self.stage = stage_callback or (lambda message: None)
+        self._ref_cache = {}
+        self._unpack_ref = struct.Struct(">Q").unpack_from
 
     # ---- pass 1: tables, layouts, roots, static targets ----
     def scan_meta(self) -> None:
         reader, self.id_size = _open(self.fp)
+        self._unpack_ref = struct.Struct(">Q" if self.id_size == 8 else ">I").unpack_from
         statics: List[Tuple[int, int, int]] = []
 
         def on_class(cid, sup, fields, sts):
@@ -215,7 +234,8 @@ class _Tracer:
               on_utf8=lambda sid, t: self.strings.__setitem__(sid, t),
               on_load_class=lambda c, nid: self.class_name_id.__setitem__(c, nid),
               on_class=on_class,
-              on_root=lambda rid: self.roots.add(rid))
+              on_root=lambda rid: self.roots.add(rid),
+              on_progress=lambda pos: self.stage(f"Tracing retention metadata: {pos:,} bytes"))
 
         self.class_name_by_id = {
             cid: _normalize_class_name(self.strings.get(nid, ""))
@@ -241,20 +261,42 @@ class _Tracer:
         return res
 
     def _refs(self, cid: int, body: bytes):
-        pos = 0
-        for nid, t, strong in self.full_layout(cid):
-            sz = self.id_size if t == 2 else TYPE_SIZES.get(t, 0)
-            if pos + sz > len(body):
+        # Precompute offsets once per class, including primitive and weak fields.
+        # Per-object work then touches only strong reference slots.
+        if cid not in self._ref_cache:
+            pos = 0
+            refs = []
+            for nid, t, strong in self.full_layout(cid):
+                if t == 2 and strong:
+                    refs.append((nid, pos))
+                pos += self.id_size if t == 2 else TYPE_SIZES.get(t, 0)
+            self._ref_cache[cid] = refs
+        unpack = self._unpack_ref
+        for nid, pos in self._ref_cache[cid]:
+            if pos + self.id_size > len(body):
                 break
-            if t == 2 and strong:
-                tgt = int.from_bytes(body[pos:pos + self.id_size], "big")
-                if tgt:
-                    yield nid, tgt
-            pos += sz
+            tgt = unpack(body, pos)[0]
+            if tgt:
+                yield nid, tgt
 
     # ---- pass 2: sample the dominant objects ----
     def sample(self, leaf: str) -> List[int]:
+        try:
+            return self._sample(leaf)
+        except _TraceComplete:
+            return self._sampled
+
+    def _sample(self, leaf: str) -> List[int]:
         out: List[int] = []
+        self._sampled = out
+        if self.sample_cap <= 0:
+            return out
+
+        def add(oid):
+            out.append(oid)
+            if len(out) >= self.sample_cap:
+                raise _TraceComplete
+
         reader, _ = _open(self.fp)
         if leaf.endswith("[]"):
             base = leaf[:-2]
@@ -263,24 +305,24 @@ class _Tracer:
 
                 def on_pa(oid, t, n):
                     if t == etype and len(out) < self.sample_cap:
-                        out.append(oid)
+                        add(oid)
                 _walk(reader, self.id_size, on_primarray=on_pa)
             else:
                 elem_ids = {cid for cid, nm in self.class_name_by_id.items() if nm in (base, leaf)}
 
                 def on_oa(oid, elem, elems):
                     if elem in elem_ids and len(out) < self.sample_cap:
-                        out.append(oid)
+                        add(oid)
                 _walk(reader, self.id_size, on_objarray=on_oa)
         else:
             leaf_ids = {cid for cid, nm in self.class_name_by_id.items() if nm == leaf}
             if not leaf_ids:
                 return out
 
-            def on_inst(oid, cid, body):
+            def on_inst(oid, cid):
                 if cid in leaf_ids and len(out) < self.sample_cap:
-                    out.append(oid)
-            _walk(reader, self.id_size, on_instance=on_inst)
+                    add(oid)
+            _walk(reader, self.id_size, on_instance_header=on_inst)
         return out
 
     def array_name(self, cid):
@@ -293,7 +335,7 @@ class _Tracer:
         frontier = {oid: [leaf] for oid in self.sample(leaf)}
         visited = set(frontier)
         best = None
-        for _ in range(self.max_levels):
+        for level in range(self.max_levels):
             if not frontier:
                 break
             for oid, chain in frontier.items():
@@ -304,6 +346,7 @@ class _Tracer:
                     return chain + ["a GC root"], ("gcroot", leaf, "")
             next_frontier = {}
             terminal = None
+            self.stage(f"Tracing retention: reference level {level + 1} / {self.max_levels}")
 
             def record(oid, target, label, cname, field):
                 nonlocal terminal, best
@@ -320,42 +363,166 @@ class _Tracer:
                         terminal = (chain, ("user", cname, field))
                     elif oid in self.roots:
                         terminal = (chain + ["a GC root"], ("gcroot", cname, field))
+                if terminal is not None:
+                    raise _TraceComplete
                 if len(next_frontier) < self.sample_cap and oid not in next_frontier:
                     next_frontier[oid] = chain
 
-            def on_inst(oid, cid, body):
-                cname = self.class_name_by_id.get(cid, "?")
-                for nid, target in self._refs(cid, body):
-                    if target in frontier:
-                        field = self.strings.get(nid, "?")
-                        record(oid, target, f"{cname}.{field}", cname, field)
-
-            def on_arr(oid, elem, elements):
-                for target in elements:
-                    if target in frontier:
-                        name = self.array_name(elem)
-                        record(oid, target, name, "java.lang.Object[]", "[]")
-                        break
-
-            reader, _ = _open(self.fp)
-            _walk(reader, self.id_size, on_instance=on_inst, on_objarray=on_arr)
+            try:
+                self.visit_holders(frontier, visited, record)
+            except _TraceComplete:
+                pass
             if terminal:
                 return terminal
             visited.update(next_frontier)
             frontier = next_frontier
         return best, None
 
+    def visit_holders(self, frontier, visited, record):
+        def on_inst(oid, cid, body):
+            if oid in visited:
+                return
+            cname = self.class_name_by_id.get(cid, "?")
+            for nid, target in self._refs(cid, body):
+                if target in frontier:
+                    field = self.strings.get(nid, "?")
+                    record(oid, target, f"{cname}.{field}", cname, field)
+
+        def on_arr(oid, elem, elements):
+            if oid in visited:
+                return
+            for target in elements:
+                if target in frontier:
+                    name = self.array_name(elem)
+                    record(oid, target, name, "java.lang.Object[]", "[]")
+                    break
+
+        reader, _ = _open(self.fp)
+        _walk(reader, self.id_size, on_instance=on_inst, on_objarray=on_arr,
+              on_progress=lambda pos: self.stage(f"Tracing retention references: {pos:,} bytes"))
+
+
+class _IndexedRoots:
+    def __init__(self, db):
+        self.db = db
+
+    def __contains__(self, oid):
+        return self.db.execute("SELECT 1 FROM roots WHERE oid=? LIMIT 1",
+                               (hex(oid),)).fetchone() is not None
+
+
+class _IndexedTracer(_Tracer):
+    """Use existing incoming-edge lookups instead of rescanning the HPROF.
+
+    Dump and field order are preserved so the same sampled chain wins. Only
+    instance fields and array elements participate, just as in the stream path;
+    graph metadata edges such as <class> are deliberately excluded.
+    """
+    def __init__(self, fp, db, **kwargs):
+        super().__init__(fp, **kwargs)
+        self.db = db
+        self.roots = _IndexedRoots(db)
+
+    def scan_meta(self):
+        self.stage("Tracing retention: loading indexed classes")
+        # LOAD_CLASS names also cover array classes without a CLASS_DUMP.
+        for row in self.db.execute("""
+            SELECT substr(m.key,6),COALESCE(s.value,'')
+            FROM meta m LEFT JOIN strings s ON s.id=m.value
+            WHERE m.key LIKE 'name:%'
+        """):
+            self.class_name_by_id[int(row[0], 16)] = _normalize_class_name(row[1])
+        for row in self.db.execute("SELECT cid FROM classes ORDER BY rowid"):
+            cid = int(row["cid"], 16)
+            for edge in self.db.execute(
+                "SELECT dst,field FROM edges WHERE src=? AND field LIKE 'static:%' ORDER BY rowid",
+                (row["cid"],),
+            ):
+                self.static_targets[int(edge["dst"], 16)] = (
+                    self.class_name_by_id.get(cid, "?"), edge["field"][7:])
+
+    def sample(self, leaf):
+        if self.sample_cap <= 0:
+            return []
+        self.stage("Tracing retention: sampling indexed objects")
+        if leaf.endswith("[]") and leaf[:-2] in _PRIM_ETYPE:
+            return [int(row[0], 16) for row in self.db.execute(
+                "SELECT oid FROM objects WHERE class_id='0x0' AND kind=? ORDER BY rowid LIMIT ?",
+                ("primitive:" + str(_PRIM_ETYPE[leaf[:-2]]), self.sample_cap),
+            )]
+        names = (leaf[:-2], leaf) if leaf.endswith("[]") else (leaf,)
+        kind = "object_array" if leaf.endswith("[]") else "instance"
+        # Limit each class before merging: the class index also orders rowids,
+        # avoiding sorting millions of objects just to select the first 2000.
+        samples = []
+        for cid, name in self.class_name_by_id.items():
+            if name in names:
+                samples.extend(self.db.execute(
+                    "SELECT rowid,oid FROM objects WHERE class_id=? AND kind=? ORDER BY rowid LIMIT ?",
+                    (hex(cid), kind, self.sample_cap),
+                ))
+                samples.sort(key=lambda row: row[0])
+                del samples[self.sample_cap:]
+        return [int(row[1], 16) for row in samples]
+
+    def visit_holders(self, frontier, visited, record):
+        self.db.execute("CREATE TEMP TABLE IF NOT EXISTS retention_frontier(oid TEXT PRIMARY KEY)")
+        self.db.execute("DELETE FROM retention_frontier")
+        self.db.executemany("INSERT INTO retention_frontier VALUES(?)",
+                            ((hex(oid),) for oid in frontier))
+        # Force bounded frontier lookups through incoming, rather than letting
+        # SQLite choose a scan over the complete edge/object tables. Sorting is
+        # backed by temporary files and preserves the stream tracer's priority.
+        rows = self.db.execute("""
+            SELECT e.src,e.dst,e.field,o.kind,o.class_id
+            FROM retention_frontier f
+            CROSS JOIN edges e INDEXED BY incoming ON e.dst=f.oid
+            CROSS JOIN objects o ON o.oid=e.src
+            WHERE e.strength='strong'
+              AND ((o.kind='instance' AND substr(e.field,1,1)!='<')
+                   OR (o.kind='object_array' AND substr(e.field,1,1)='['))
+            ORDER BY o.rowid,e.rowid
+        """)
+        previous_array = None
+        for row in rows:
+            oid = int(row["src"], 16)
+            if oid in visited:
+                continue
+            cid = int(row["class_id"], 16)
+            if row["kind"] == "object_array":
+                if oid == previous_array:
+                    continue
+                previous_array = oid
+                record(oid, int(row["dst"], 16), self.array_name(cid), "java.lang.Object[]", "[]")
+            else:
+                cname = self.class_name_by_id.get(cid, "?")
+                field = row["field"].rsplit(".", 1)[-1]
+                record(oid, int(row["dst"], 16), f"{cname}.{field}", cname, field)
+
 
 def trace_retention(fp: BinaryIO, leaf_class: str, source=None,
-                    sample_cap: int = 2000, max_levels: int = 6) -> Optional[Finding]:
+                    sample_cap: int = 2000, max_levels: int = 6,
+                    index_path=None, stage_callback=None) -> Optional[Finding]:
     """Trace what holds `leaf_class` alive and return a retention-chain Finding.
 
     Returns None if nothing useful was found (no holders, or the class isn't in
     the dump). Best-effort and heuristic — see the module docstring.
     """
-    tracer = _Tracer(fp, sample_cap=sample_cap, max_levels=max_levels)
-    tracer.scan_meta()
-    chain, terminal = tracer.trace(leaf_class)
+    db = None
+    try:
+        options = dict(sample_cap=sample_cap, max_levels=max_levels,
+                       stage_callback=stage_callback)
+        if index_path is not None:
+            from .heap_index import connect
+            db = connect(index_path)
+            tracer = _IndexedTracer(fp, db, **options)
+        else:
+            tracer = _Tracer(fp, **options)
+        tracer.scan_meta()
+        chain, terminal = tracer.trace(leaf_class)
+    finally:
+        if db is not None:
+            db.close()
     if not chain or len(chain) < 2:
         return None
 

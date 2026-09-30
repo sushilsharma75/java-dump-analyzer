@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 import app.vendor.dbdoctor.engine.rules as _rules_pkg
 from app.vendor.dbdoctor.engine.models import EngineName, Snapshot
 from app.vendor.dbdoctor.engine.rules.base import REGISTRY, Finding, Rule
+from app.vendor.dbdoctor.engine.schema import SchemaCatalog
 from app.vendor.dbdoctor.engine.score import HealthScore, compute_score, sort_findings
 
 _discovered = False
@@ -40,6 +41,8 @@ class AnalysisResult(BaseModel):
     is_delta: bool = False
     capabilities: list[str] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
+    schema_catalog: SchemaCatalog | None = None
+    coverage: dict[str, str] = Field(default_factory=dict)
     score: HealthScore
 
 
@@ -51,6 +54,18 @@ def run_all(snapshot: Snapshot) -> AnalysisResult:
         findings.extend(rule_cls().evaluate(snapshot))
 
     findings = sort_findings(findings)
+    coverage = {
+        "queries": "observed" if snapshot.queries else "no observations",
+        "tables": "observed" if snapshot.tables else "no observations",
+        "indexes": "observed" if snapshot.indexes else "no observations",
+        "settings": "observed" if snapshot.settings else "no observations",
+        "operations": "observed"
+        if snapshot.connections or snapshot.sessions or snapshot.lock_waits
+        else "no observations",
+    }
+    score = compute_score(findings)
+    if not snapshot.queries or not snapshot.tables:
+        score.score = None
     return AnalysisResult(
         engine=snapshot.meta.engine,
         host_alias=snapshot.meta.host_alias,
@@ -58,5 +73,7 @@ def run_all(snapshot: Snapshot) -> AnalysisResult:
         is_delta=snapshot.meta.is_delta,
         capabilities=snapshot.meta.capabilities,
         findings=findings,
-        score=compute_score(findings),
+        schema_catalog=snapshot.schema_catalog,
+        coverage=coverage,
+        score=score,
     )

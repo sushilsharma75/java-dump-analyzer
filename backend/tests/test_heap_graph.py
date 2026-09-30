@@ -1,5 +1,6 @@
 """Phase 2 retention tracer: reverse-path from the top consumer to the holder."""
 import io
+import pytest
 
 from app.analyzers.heap_dump import parse_heap_dump
 from app.analyzers.heap_graph import trace_retention
@@ -90,7 +91,8 @@ def test_weak_referent_is_not_reported_as_retaining_leaf():
     assert trace_retention(io.BytesIO(b.build()), "example.Leaf") is None
 
 
-def test_static_field_directly_holding_array_is_found():
+def test_static_field_directly_holding_array_is_found(tmp_path):
+    from app.analyzers.heap_index import build_index
     b = HprofBuilder()
     leaf = b.load_class("example.Leaf")
     array = b.load_class("[Lexample.Leaf;")
@@ -105,6 +107,10 @@ def test_static_field_directly_holding_array_is_found():
     assert "[][]" not in " ".join(finding.evidence)
     array_finding = trace_retention(io.BytesIO(b.build()), "example.Leaf[]")
     assert "example.Cache.entries" in " ".join(array_finding.evidence)
+    path = tmp_path / 'heap.sqlite'
+    build_index(io.BytesIO(b.build()), path)
+    assert trace_retention(io.BytesIO(b.build()), 'example.Leaf', index_path=path) == finding
+    assert trace_retention(io.BytesIO(b.build()), 'example.Leaf[]', index_path=path) == array_finding
 
 
 def test_array_payload_memory_is_bounded_and_early_match_consumes_remainder():
@@ -128,7 +134,8 @@ def test_array_payload_memory_is_bounded_and_early_match_consumes_remainder():
     assert peak < 20 * 1024 * 1024
 
 
-def test_reported_chain_does_not_mix_separate_branches():
+def test_reported_chain_does_not_mix_separate_branches(tmp_path):
+    from app.analyzers.heap_index import build_index
     b = HprofBuilder()
     leaf = b.load_class("example.Leaf")
     a = b.load_class("java.util.BranchA")
@@ -148,6 +155,9 @@ def test_reported_chain_does_not_mix_separate_branches():
     assert "BranchZ.right" in evidence
     assert "BranchA.left" not in evidence
     assert "Holder.branch" in evidence
+    path = tmp_path / 'heap.sqlite'
+    build_index(io.BytesIO(b.build()), path)
+    assert trace_retention(io.BytesIO(b.build()), 'example.Leaf', index_path=path) == finding
 
 
 def test_large_dump_tracing_is_enabled_by_default(monkeypatch):
@@ -184,3 +194,146 @@ def test_automatic_tracing_finds_owner_in_sparse_10_gib_dump(tmp_path, monkeypat
     trace = next(f for f in result.findings if f.title.startswith('Retention path'))
     assert 'Cache.payload' in trace.title
     assert 'byte[]' in trace.title
+
+
+@pytest.mark.parametrize('anchor', ['user', 'root', 'static', 'none'])
+@pytest.mark.parametrize('leaf_name', ['example.Leaf', 'example.Leaf[]', 'byte[]'])
+def test_indexed_trace_preserves_stream_chain_without_reading_dump(tmp_path, anchor, leaf_name):
+    from app.analyzers.heap_index import build_index
+    b = HprofBuilder()
+    leaf = b.load_class('example.Leaf')
+    array = b.load_class('[Lexample.Leaf;')
+    parent = b.load_class('java.util.Parent')
+    owner = b.load_class('example.Owner' if anchor == 'user' else 'java.util.Owner')
+    b.class_dump(leaf)
+    b.class_dump(array)
+    b.class_dump(parent, instance_fields=[('padding', b.INT), ('items', b.OBJECT)])
+    b.class_dump(owner, super_id=parent)
+    obj = b.instance(leaf)
+    if leaf_name == 'byte[]':
+        target = b.primitive_array(b.BYTE, 3, data=b'\x01\x02\x03')
+    else:
+        target = b.object_array(array, [obj, obj])
+    held = b.instance(owner, body=b.pack_fields([(b.INT, 42), (b.OBJECT, target)]))
+    if anchor == 'root':
+        b.gc_root(held)
+    elif anchor == 'static':
+        cache = b.load_class('example.Cache')
+        b.class_dump(cache, static_object_fields=[('entries', held)])
+    data = b.build()
+    path = tmp_path / 'heap.sqlite'
+    build_index(io.BytesIO(data), path)
+    expected = trace_retention(io.BytesIO(data), leaf_name)
+    class Unreadable:
+        def read(self, *args):
+            raise AssertionError('indexed retention must not reread the dump')
+        seek = read
+    actual = trace_retention(Unreadable(), leaf_name, index_path=path)
+    assert actual == expected
+    assert actual is not None
+
+
+def test_indexed_trace_keeps_sample_order_and_excludes_weak_and_metadata_edges(tmp_path):
+    from app.analyzers.heap_index import build_index
+    b = HprofBuilder()
+    leaf = b.load_class('example.Leaf')
+    other_leaf = b.load_class('example.Leaf', fresh=True)
+    reference = b.load_class('java.lang.ref.Reference')
+    weak = b.load_class('example.WeakReference')
+    holder = b.load_class('example.Holder')
+    b.class_dump(leaf)
+    b.class_dump(other_leaf)
+    b.class_dump(reference, instance_fields=[('referent', b.OBJECT)])
+    b.class_dump(weak, super_id=reference)
+    b.class_dump(holder, instance_fields=[('payload', b.OBJECT)])
+    first = b.instance(other_leaf)
+    second = b.instance(leaf)
+    b.instance(weak, refs=[first])
+    b.instance(holder, refs=[second])
+    path = tmp_path / 'heap.sqlite'
+    data = b.build()
+    build_index(io.BytesIO(data), path)
+    for cap in (0, 1, 2):
+        assert trace_retention(io.BytesIO(data), 'example.Leaf', sample_cap=cap, index_path=path) == \
+               trace_retention(io.BytesIO(data), 'example.Leaf', sample_cap=cap)
+    assert trace_retention(io.BytesIO(data), 'example.Leaf', sample_cap=1, index_path=path) is None
+    # A class's <class> edges are not instance holding fields.
+    assert trace_retention(io.BytesIO(data), 'example.Leaf[]', index_path=path) is None
+
+
+def test_streaming_trace_stops_at_first_terminal_and_reports_progress():
+    from app.analyzers.heap_graph import _Tracer
+    b = HprofBuilder()
+    leaf = b.load_class('example.Leaf')
+    holder = b.load_class('example.Holder')
+    b.class_dump(leaf)
+    b.class_dump(holder, instance_fields=[('payload', b.OBJECT)])
+    target = b.instance(leaf)
+    b.instance(holder, refs=[target])
+    # Tail is deliberately larger than the reader's 4 MiB read-ahead buffer.
+    for _ in range(150_000):
+        b.instance(holder, refs=[0])
+    class CountingStream(io.BytesIO):
+        bytes_read = 0
+        def read(self, n=-1):
+            data = super().read(n)
+            self.bytes_read += len(data)
+            return data
+    data = b.build()
+    stream = CountingStream(data)
+    stages = []
+    tracer = _Tracer(stream, sample_cap=1, stage_callback=stages.append)
+    tracer.scan_meta()
+    stream.bytes_read = 0
+    chain, terminal = tracer.trace('example.Leaf')
+    assert terminal == ('user', 'example.Holder', 'payload')
+    assert chain == ['example.Leaf', 'example.Holder.payload']
+    assert stream.bytes_read < 2 * len(data)
+    assert any('reference level 1' in stage for stage in stages)
+
+
+def test_indexed_trace_resolves_array_load_class_without_class_dump(tmp_path):
+    from app.analyzers.heap_index import build_index
+    b = HprofBuilder()
+    leaf = b.load_class('example.Leaf')
+    array = b.load_class('[Lexample.Leaf;')
+    holder = b.load_class('example.Holder')
+    b.class_dump(leaf)
+    b.class_dump(holder, instance_fields=[('items', b.OBJECT)])
+    obj = b.instance(leaf)
+    arr = b.object_array(array, [obj])
+    b.instance(holder, refs=[arr])
+    data = b.build()
+    path = tmp_path / 'heap.sqlite'
+    build_index(io.BytesIO(data), path)
+    for name in ('example.Leaf', 'example.Leaf[]'):
+        expected = trace_retention(io.BytesIO(data), name)
+        assert expected is not None
+        assert trace_retention(io.BytesIO(data), name, index_path=path) == expected
+
+
+def test_trace_supports_four_byte_object_ids(tmp_path):
+    import struct
+    from app.analyzers.heap_index import build_index
+    def record(tag, body):
+        return struct.pack('>BII', tag, 0, len(body)) + body
+    top = b''
+    for sid, text in ((1, 'example.Leaf'), (2, 'example.Holder'), (3, 'items')):
+        top += record(1, struct.pack('>I', sid) + text.encode())
+    for serial, cid, sid in ((1, 10, 1), (2, 20, 2)):
+        top += record(2, struct.pack('>IIII', serial, cid, 0, sid))
+    segment = b''
+    for cid in (10, 20):
+        segment += struct.pack('>B', 0x20) + struct.pack('>IIIIIIIII', cid, 0, 0, 0, 0, 0, 0, 0, 4)
+        segment += struct.pack('>HHH', 0, 0, int(cid == 20))
+        if cid == 20:
+            segment += struct.pack('>IB', 3, 2)
+    segment += struct.pack('>BIIII', 0x21, 100, 0, 10, 0)
+    segment += struct.pack('>BIIII I', 0x21, 200, 0, 20, 4, 100)
+    segment += struct.pack('>BI', 0xff, 200)
+    data = b'JAVA PROFILE 1.0.2\0' + struct.pack('>III', 4, 0, 0) + top + record(0x1c, segment)
+    expected = trace_retention(io.BytesIO(data), 'example.Leaf')
+    assert expected is not None and 'Holder.items' in expected.title
+    path = tmp_path / 'heap.sqlite'
+    build_index(io.BytesIO(data), path)
+    assert trace_retention(io.BytesIO(data), 'example.Leaf', index_path=path) == expected

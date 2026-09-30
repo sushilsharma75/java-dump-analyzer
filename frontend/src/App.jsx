@@ -66,11 +66,15 @@ export default function App() {
     } catch {}
   }, [])
 
-  const handleDatabaseUpload = useCallback(async (file, baseline) => {
-    setLoading(true); setError(null); setFilename(file.name)
+  const handleDatabaseUpload = useCallback(async (file, baseline, ddl = [], options = {}) => {
+    setLoading(true); setError(null); setFilename(file?.name || ddl[0]?.name || 'Database analysis')
     try {
-      const body = new FormData(); body.append('file', file)
+      const body = new FormData()
+      if (file) body.append('file', file)
       if (baseline) body.append('baseline', baseline)
+      ddl.forEach(source => body.append('ddl', source))
+      body.append('engine', options.engine || 'postgres')
+      body.append('client_alias', options.clientAlias || '')
       const response = await fetch('/api/analyze/database', { method: 'POST', body })
       if (!response.ok) throw new Error(`Database analysis failed: ${await response.text()}`)
       setAnalysis(await response.json()); setView('database')

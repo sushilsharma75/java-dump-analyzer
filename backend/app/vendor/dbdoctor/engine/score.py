@@ -34,7 +34,6 @@ CATEGORY_CAP: dict[str, int] = {
     "ops": 25,
     "config": 20,
     "maintenance": 15,
-    "procedures": 20,
     "other": 10,
 }
 
@@ -43,7 +42,7 @@ TOP_N = 5
 
 
 class HealthScore(BaseModel):
-    score: int
+    score: int | None
     category_deductions: dict[str, int] = Field(
         default_factory=dict, description="points deducted per category, post-cap"
     )

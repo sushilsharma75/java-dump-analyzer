@@ -66,6 +66,7 @@ test('Finding cards expose confidence and verification', () => {
 
 const DatabaseAnalysis = require('../src/components/DatabaseAnalysis.jsx').default
 const { databaseReportHTML } = require('../src/components/DatabaseAnalysis.jsx')
+const { DatabaseUpload, downloadDatabaseArtifact } = require('../src/components/DatabaseAnalysis.jsx')
 const database = {
   analysis_id: 'b'.repeat(32), summary: 'postgres · test-db', status: 'partial', collected_at: '2026-07-01T00:00:00Z',
   score: { score: 100 }, score_label: 'Observed findings score (not a health certification)',
@@ -82,6 +83,58 @@ test('Database export escapes SQL and preserves measured evidence', () => {
   const html = databaseReportHTML(database)
   for (const text of ['&lt;script&gt;', '1200', 'db-0001', 'Missing statistics']) assert.ok(html.includes(text), text)
   assert.ok(!html.includes('<script>bad</script>'))
+})
+
+test('Database uploads expose SQL-only inspection directly without login', () => {
+  const html = renderToString(React.createElement(DatabaseUpload, { onUpload: () => {}, loading: false }))
+  for (const text of ['Combined DDL file', 'one file', 'separate schema and procedure files are not required', 'DELIMITER blocks', '.ddl', 'Engine for SQL-only inspection', 'PostgreSQL', 'MariaDB', '20 UTF-8 SQL files', 'Analyse database']) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('Login'))
+})
+
+test('SQL-only results expose schema, routine details and unavailable score', () => {
+  const schema_catalog = {
+    source_count: 1, tables: [{ name: 'shop.orders', columns: [{ name: 'id', data_type: 'INT', primary_key: true }], referenced_tables: [] }],
+    indexes: [], views: [], warnings: [], routines: [{
+      name: 'shop.process_orders', kind: 'procedure', source_file: 1, line: 4, dependencies: ['shop.orders'],
+      parameters: [{ name: 'p_id', data_type: 'INT', declaration_line: 4, occurrences: 2, assignment_lines: [] }],
+      variables: [{ name: 'v_count', data_type: 'INT', declaration_line: 6, occurrences: 1, assignment_lines: [8] }],
+      temporary_tables: [{ name: 'pending', creation_line: 7, indexes: [], read_lines: [8], write_lines: [], drop_lines: [9] }],
+      statements: [{ line: 8, kind: 'SELECT', parsed: true, normalized_sql: 'SELECT <script>bad</script>' }],
+      loop_lines: [], branch_lines: [], dynamic_sql_lines: [], limitations: ['Static analysis only'],
+    }],
+  }
+  const analysis = { ...database, status: 'static', score: { score: null }, schema_catalog }
+  const html = renderToString(React.createElement(DatabaseAnalysis, { analysis }))
+  for (const text of ['Unavailable', 'shop.orders', 'shop.process_orders', 'p_id', 'v_count', 'pending', 'Export tasks', 'Export schema JSON', 'Print / save PDF']) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('JVM and database evidence'))
+  assert.ok(!html.includes('<script>bad</script>'))
+  const report = databaseReportHTML(analysis)
+  assert.ok(report.includes('Unavailable') && report.includes('shop.process_orders'))
+  assert.ok(!report.includes('null/100') && !report.includes('<script>bad</script>'))
+})
+
+test('Routine runtime statistics are visible without uploaded DDL', () => {
+  const analysis = { ...database, snapshot: { routine_stats: [{ name: 'shop.process_orders', calls: 10, total_time_ms: 123, nested_statements: 20, nested_time_ms: 100 }] } }
+  const html = renderToString(React.createElement(DatabaseAnalysis, { analysis }))
+  assert.ok(html.includes('Captured routine execution statistics'))
+  assert.ok(html.includes('shop.process_orders'))
+})
+
+test('Database report downloads use the host API without bearer tokens', async () => {
+  const previous = { fetch: global.fetch, document: global.document, setTimeout: global.setTimeout, create: URL.createObjectURL, revoke: URL.revokeObjectURL }
+  const calls = []; let clicked = false
+  global.fetch = async (...args) => { calls.push(args); return { ok: true, blob: async () => new Blob(['tasks']) } }
+  global.document = { createElement: () => ({ click: () => { clicked = true } }) }
+  global.setTimeout = () => {}
+  URL.createObjectURL = () => 'blob:report'; URL.revokeObjectURL = () => {}
+  try {
+    await downloadDatabaseArtifact(database.analysis_id, 'tasks')
+    assert.deepEqual(calls, [[`/api/database/${database.analysis_id}/report?fmt=tasks`]])
+    assert.ok(clicked)
+  } finally {
+    global.fetch = previous.fetch; global.document = previous.document; global.setTimeout = previous.setTimeout
+    URL.createObjectURL = previous.create; URL.revokeObjectURL = previous.revoke
+  }
 })
 
 test('Stored procedure source evidence and suggestions appear in UI and export', () => {
