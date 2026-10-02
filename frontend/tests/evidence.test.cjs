@@ -372,3 +372,16 @@ test('background progress explains scan scope and preserves cancellation state',
   assert.ok(html.includes('completion time is unknown'))
   assert.ok(html.includes('disabled'))
 })
+
+test('background progress remains visible between scans and hides when finished', () => {
+  const HeapBackground = require('../src/components/HeapBackground.jsx').default
+  for (const status of ['queued', 'running', 'done', 'cancelled', 'error']) {
+    const html = renderToString(React.createElement(HeapBackground, {
+      job: { status, stage: 'Decoding object references', scan_pass: 0, scan_bytes: 0, scan_total: 0 },
+    }))
+    const running = ['queued', 'running'].includes(status)
+    assert.equal(html.includes('<progress'), running)
+    assert.equal(html.includes('Waiting for scan progress'), running)
+    assert.ok(!html.includes('value="0"')) // Unknown progress must not claim zero percent.
+  }
+})

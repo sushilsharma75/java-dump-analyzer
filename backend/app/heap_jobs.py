@@ -60,10 +60,17 @@ class HeapRun:
     def stage(self, name):
         self.check()
         if name != self.current_stage:
+            # Analyzer messages append live counters after a colon. Updating
+            # those details does not start a new stage or a new file scan.
+            changed_stage = name.partition(':')[0] != self.current_stage.partition(':')[0]
             self.current_stage = name
-            self.scan_pass = 0
-            JOBS.update(self.job_id, stage=name, stage_started_at=time.time(),
-                        scan_pass=0, scan_bytes=0, scan_total=0)
+            updates = {'stage': name}
+            if changed_stage:
+                self.scan_pass = 0
+                self.last_tick = 0
+                updates.update(stage_started_at=time.time(),
+                               scan_pass=0, scan_bytes=0, scan_total=0)
+            JOBS.update(self.job_id, **updates)
             persist_job(JOBS.get(self.job_id))
 
     def progress(self, position, total, new_pass=False):

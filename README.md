@@ -464,6 +464,42 @@ cleaning up its transient job record.
 
 ## Configuration
 
+### Windows: enable full indexing for a large heap
+
+For a dump containing 208,822,163 objects, the following example raises both
+object-count limits to 250 million and removes the optional-analysis time limit.
+Set these variables in the **same PowerShell window that starts the backend**:
+
+```powershell
+# From the repository directory
+$env:HEAP_INDEX_MAX_OBJECTS = "250000000"
+$env:HEAP_DOMINATOR_MAX_OBJECTS = "250000000"
+$env:HEAP_ANALYSIS_MAX_SECONDS = "0"
+
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+- `HEAP_INDEX_MAX_OBJECTS` allows the persistent object/reference index up to the
+  specified object count.
+- `HEAP_DOMINATOR_MAX_OBJECTS` allows retained-size analysis up to the specified
+  object count.
+- `HEAP_ANALYSIS_MAX_SECONDS=0` permits unlimited optional-analysis time. Set a
+  positive number of seconds to impose a budget, such as `7200` for two hours.
+
+These values apply only to this PowerShell session and processes started from it.
+For an existing run, use **Stop background analysis** to preserve saved findings,
+stop the backend with `Ctrl+C`, set the variables, and restart it. Start a new
+analysis to use the new settings; refreshing the browser does not change an
+existing worker's configuration.
+
+Raising these limits permits more work; it does not make indexing faster or
+guarantee completion. Other configured limits, including byte ceilings, still
+apply. Full indexing and retained-size analysis at this scale can take substantial
+time, disk space, and memory.
+
+### Environment variables
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `DUMP_TMP_DIR` | OS temp directory + `postmortem` | Uploaded dump staging |

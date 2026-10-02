@@ -158,6 +158,34 @@ def test_scan_progress_counts_rewinds_and_cancellation(tmp_path, monkeypatch):
     run.finish('cancelled')
 
 
+def test_stage_counter_updates_preserve_scan_progress(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts, 'ROOT', tmp_path)
+    jid = JOBS.create(100)
+    JOBS.mark_running(jid)
+    run = HeapRun(jid, 'b' * 32)
+    try:
+        run.stage('Indexing object records')
+        run.progress(40, 100, new_pass=True)
+        started = JOBS.get(jid)['stage_started_at']
+        for count in (10000, 20000, 30000):
+            message = f'Indexing object records: {count:,}'
+            run.stage(message)
+            job = JOBS.get(jid)
+            assert job['stage'] == message
+            assert job['stage_started_at'] == started
+            assert (job['scan_pass'], job['scan_bytes'], job['scan_total']) == (1, 40, 100)
+        run.progress(0, 100, new_pass=True)
+        assert JOBS.get(jid)['scan_pass'] == 2
+        run.stage('Decoding object references')
+        job = JOBS.get(jid)
+        assert (job['scan_pass'], job['scan_bytes'], job['scan_total']) == (0, 0, 0)
+        run.progress(10, 100)
+        assert JOBS.get(jid)['scan_bytes'] == 10
+    finally:
+        run.finish('cancelled')
+        JOBS.remove(jid)
+
+
 def test_gzip_upload_checkpoints_use_expanded_size_and_cleanup(setup, monkeypatch):
     import gzip
     from app import main
