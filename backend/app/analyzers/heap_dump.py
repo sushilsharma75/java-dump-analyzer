@@ -20,8 +20,10 @@ hprof payload length.
 Spec reference: openjdk hprof.h (HotSpot Serviceability).
 """
 from __future__ import annotations
+import time
 import struct
 import os
+from pathlib import Path
 from collections import defaultdict, Counter
 from typing import BinaryIO, Dict, Optional, Tuple, List
 from ..schemas import (
@@ -30,6 +32,7 @@ from ..schemas import (
 )
 from .source import is_user_code
 from .heap_sizing import SizeModel, size_model
+from .heap_control import check_budget, within_budget, HeapBudgetExceeded
 
 
 # Top-level record tags
@@ -115,6 +118,7 @@ class _Reader:
         avail = len(self._buf) - self._buf_pos
         if avail >= n:
             return
+        check_budget()
         # Compact remaining bytes to the front, then read more
         remaining = self._buf[self._buf_pos:] if avail > 0 else b""
         need = max(self._buf_size, n)
@@ -147,6 +151,7 @@ class _Reader:
             self.pos += n
             return
         # Drop the buffer
+        check_budget()
         consumed = avail
         self._buf = b""
         self._buf_pos = 0
@@ -231,7 +236,16 @@ def parse_heap_dump(
         deep: lift the file-size ceilings of the memory-bounded streaming stages
             (retention tracing, duplicate-array scan) for this dump. Costs time,
             not RAM; a limit of 0 (disabled by configuration) still wins.
+            Does not override the object-count limits or shared time budget.
     """
+    started = time.monotonic()
+    seconds = _heap_limit("HEAP_ANALYSIS_MAX_SECONDS", 900)
+    deadline = started + seconds if seconds > 0 else None
+
+    def enrich(fn, *args, **kwargs):
+        with within_budget(deadline):
+            return fn(*args, **kwargs)
+
     stage = stage_callback or (lambda message: None)
     stage("Parsing heap records")
     reader = _Reader(fp)
@@ -531,7 +545,7 @@ def parse_heap_dump(
             verdict=(
                 "critical" if any(f.severity == Severity.CRITICAL for f in report_findings)
                 else "degraded" if any(f.severity == Severity.WARNING for f in report_findings)
-                else "unknown" if pending else "healthy"
+                else "unknown" if pending or skipped else "healthy"
             ),
         )
 
@@ -552,26 +566,33 @@ def parse_heap_dump(
         _attach_references(source, histogram_by_count[:8])
 
     checkpoint("source matching")
-    # The histogram is already checkpointed. Full native indexing continues in
-    # the background; only explicit operator budgets restrict its input size.
+    # The histogram is already checkpointed. SQLite rows/edges are expensive at
+    # hundreds of millions of objects, even when the input is only a few GiB.
     index_gate = _gate_reason("object index", enabled=bool(index_path),
         truncated=truncated, file_size=file_size,
         limit=_heap_limit("HEAP_INDEX_MAX_BYTES", 2**63 - 1),
         seekable=_seekable(fp), env_hint="HEAP_INDEX_MAX_BYTES")
-    object_limit = _heap_limit("HEAP_INDEX_MAX_OBJECTS", 2**63 - 1)
+    object_limit = _heap_limit("HEAP_INDEX_MAX_OBJECTS", 2_000_000)
     if not index_gate and total_instances > object_limit:
         index_gate = SkippedAnalysis(stage="object index", status="skipped",
             reason=f"{total_instances:,} objects exceeds HEAP_INDEX_MAX_OBJECTS={object_limit:,}; "
                    "full histogram and source findings remain available")
     if not index_gate:
+        index_existed = Path(index_path).exists()
         try:
             from .heap_index import build_index
-            build_index(fp, index_path, model=model, stage_callback=stage)
+            enrich(build_index, fp, index_path, model=model, stage_callback=stage)
             indexed = True
             stages.append(AnalysisStage(stage="object index", status="completed"))
         except Exception as e:
-            stages.append(AnalysisStage(stage="object index", status="failed", reason=str(e)))
-            skipped.append(SkippedAnalysis(stage="object index", status="failed", reason=str(e)))
+            status = "partial" if isinstance(e, HeapBudgetExceeded) else "failed"
+            stages.append(AnalysisStage(stage="object index", status=status, reason=str(e)))
+            skipped.append(SkippedAnalysis(stage="object index", status=status, reason=str(e)))
+            # build_index closes its connection before this handler. An
+            # incomplete catalog must not be offered by the object browser.
+            if not index_existed:
+                Path(index_path).unlink(missing_ok=True)
+                Path(str(index_path) + "-journal").unlink(missing_ok=True)
     else:
         stages.append(AnalysisStage(stage="object index", status="skipped", reason=index_gate.reason))
         if index_path:
@@ -608,14 +629,15 @@ def parse_heap_dump(
             try:
                 from .heap_graph import trace_retention
                 stage("Tracing retention")
-                rf = trace_retention(fp, leaf, source=source,
+                rf = enrich(trace_retention, fp, leaf, source=source,
                                      index_path=index_path if indexed else None,
-                                     stage_callback=stage)
+                                     stage_callback=stage,
+                                     metadata=(scan, static_object_fields))
                 if rf:
                     findings = [f for f in findings if f.title != "No obvious red flags"]
                     findings.insert(0, rf)
             except Exception as e:
-                skipped.append(SkippedAnalysis(stage="retention tracing (what holds the top consumer)", status="failed", reason=str(e)))
+                skipped.append(SkippedAnalysis(stage="retention tracing (what holds the top consumer)", status="partial" if isinstance(e, HeapBudgetExceeded) else "failed", reason=str(e)))
 
     checkpoint("retention tracing (what holds the top consumer)")
 
@@ -631,27 +653,30 @@ def parse_heap_dump(
         try:
             from .heap_index import duplicate_arrays
             stage("Finding duplicate arrays")
-            duplicates = duplicate_arrays(index_path)
+            duplicates = enrich(duplicate_arrays, index_path)
             wasted_bytes = duplicates["potential_duplicate_bytes"]
             if wasted_bytes:
                 findings.append(Finding(severity=Severity.INFO, category="memory", title=f"Duplicate array contents: {_fmt_bytes(wasted_bytes)} potential savings",
                     description=duplicates["limitation"], conclusion="observation", confidence="medium",
                     evidence=[f"{g['copies']} copies; example object {g['example']}" for g in duplicates["groups"]]))
         except Exception as e:
-            skipped.append(SkippedAnalysis(stage="duplicate-string / duplicate-buffer scan", status="failed", reason=str(e)))
+            skipped.append(SkippedAnalysis(stage="duplicate-string / duplicate-buffer scan", status="partial" if isinstance(e, HeapBudgetExceeded) else "failed", reason=str(e)))
     elif waste_gate:
         skipped.append(waste_gate)
+    elif not (array_count.get(-8) or array_count.get(-5)):
+        # The complete histogram proves there are no byte/char arrays to hash.
+        wasted_bytes = 0
     else:
         try:
             from .heap_waste import find_wasted_memory
             total_shallow = sum(h.shallow_size_bytes for h in histogram_by_size)
             stage("Sampling duplicate arrays")
-            waste_findings, wasted_bytes = find_wasted_memory(fp, total_shallow)
+            waste_findings, wasted_bytes = enrich(find_wasted_memory, fp, total_shallow)
             if waste_findings:
                 findings = [f for f in findings if f.title != "No obvious red flags"]
                 findings.extend(waste_findings)
         except Exception as e:
-            skipped.append(SkippedAnalysis(stage="duplicate-string / duplicate-buffer scan", status="failed", reason=str(e)))
+            skipped.append(SkippedAnalysis(stage="duplicate-string / duplicate-buffer scan", status="partial" if isinstance(e, HeapBudgetExceeded) else "failed", reason=str(e)))
 
     checkpoint("duplicate-string / duplicate-buffer scan")
 
@@ -667,21 +692,21 @@ def parse_heap_dump(
                             enabled=True, truncated=truncated, file_size=file_size,
                             limit=dominator_max_bytes(), seekable=_seekable(fp),
                             env_hint="HEAP_DOMINATOR_MAX_BYTES")
-    dom_objects = _heap_limit("HEAP_DOMINATOR_MAX_OBJECTS", 2**63 - 1)
+    dom_objects = _heap_limit("HEAP_DOMINATOR_MAX_OBJECTS", 2_000_000)
     if not dom_gate and total_instances > dom_objects:
         dom_gate = SkippedAnalysis(stage="dominator tree (exact retained sizes, leak suspects, unreachable-object accounting)",
             status="skipped", reason=f"{total_instances:,} objects exceeds HEAP_DOMINATOR_MAX_OBJECTS={dom_objects:,}")
-    failed_index = next((item for item in skipped if item.stage == "object index" and item.status == "failed"), None)
+    failed_index = next((item for item in skipped if item.stage == "object index" and item.status in ("failed", "partial")), None)
     if not dom_gate and failed_index:
         dom_gate = SkippedAnalysis(stage="dominator tree (exact retained sizes, leak suspects, unreachable-object accounting)",
-                                  status="failed", reason="Object indexing failed: " + failed_index.reason)
+                                  status=failed_index.status, reason="Object indexing did not complete: " + failed_index.reason)
     if dom_gate:
         skipped.append(dom_gate)
     else:
         try:
             from .heap_dominators import compute_retained
             stage("Computing retained sizes")
-            rr = compute_retained(fp, model=model, index_path=index_path if indexed else None, source=source, stage_callback=stage)
+            rr = enrich(compute_retained, fp, model=model, index_path=index_path if indexed else None, source=source, stage_callback=stage)
             dominator_entries = rr.entries
             reachable_bytes = rr.reachable_bytes
             unreachable_instances = rr.unreachable_count
@@ -693,7 +718,7 @@ def parse_heap_dump(
             if os.environ.get("HEAP_DEPLOY_STRICT"):
                 raise
             skipped.append(SkippedAnalysis(
-                stage="dominator tree (exact retained sizes)", status="failed",
+                stage="dominator tree (exact retained sizes)", status="partial" if isinstance(exc, HeapBudgetExceeded) else "failed",
                 reason=f"Native graph analysis failed: {exc}. Completed histogram and field findings remain available.",
             ))
 
@@ -708,7 +733,7 @@ def parse_heap_dump(
     try:
         from .heap_deployments import analyze_deployments, find_duplicate_classes
         stage("Attributing deployments and threads")
-        deployments, thread_ownership, dep_findings = analyze_deployments(
+        deployments, thread_ownership, dep_findings = enrich(analyze_deployments,
             scan, instance_count, instance_size,
             fp=fp if (_seekable(fp) and not max_bytes) else None,
         )
@@ -716,10 +741,17 @@ def parse_heap_dump(
         if dep_findings:
             findings = [f for f in findings if f.title != "No obvious red flags"]
             findings = dep_findings + findings
-    except Exception:
+    except Exception as exc:
         if os.environ.get("HEAP_DEPLOY_STRICT"):
             raise
-        skipped.append(SkippedAnalysis(stage="deployment attribution", status="failed", reason="Deployment graph analysis failed"))
+        if isinstance(exc, HeapBudgetExceeded):
+            # Classloader structure was collected in the histogram pass and
+            # needs no additional dump scan, even after the deadline.
+            deployments, thread_ownership, dep_findings = analyze_deployments(
+                scan, instance_count, instance_size, resolve=False)
+            duplicate_classes = find_duplicate_classes(scan, deployments)
+            findings.extend(dep_findings)
+        skipped.append(SkippedAnalysis(stage="deployment attribution", status="partial" if isinstance(exc, HeapBudgetExceeded) else "failed", reason=str(exc)))
 
     pending.discard("deployment attribution")
     stage("Finalizing report")
@@ -1094,21 +1126,25 @@ def _scan_heap_segment(
             array_size[elem_class] += (arr_hdr + n_elems * oop + align - 1) // align * align
             skip_payload(n_elems * id_size)
 
-        elif tag in (HEAP_ROOT_UNKNOWN, HEAP_ROOT_STICKY_CLASS, HEAP_ROOT_MONITOR_USED):
-            ensure(id_size); pos += id_size
-        elif tag == HEAP_ROOT_JNI_GLOBAL:
-            ensure(2 * id_size); pos += 2 * id_size
-        elif tag == HEAP_ROOT_THREAD_OBJ:
-            # The object id of a *live* thread — what separates a running thread
-            # from a dead Thread object still sitting on the heap.
-            if ensure(id_size + 8):
-                if scan is not None:
-                    scan.note_thread_root(S_ID.unpack_from(buf, pos)[0])
-            pos += id_size + 8
-        elif tag in (HEAP_ROOT_JNI_LOCAL, HEAP_ROOT_JAVA_FRAME):
-            ensure(id_size + 8); pos += id_size + 8
-        elif tag in (HEAP_ROOT_NATIVE_STACK, HEAP_ROOT_THREAD_BLOCK):
-            ensure(id_size + 4); pos += id_size + 4
+        elif tag in (HEAP_ROOT_UNKNOWN, HEAP_ROOT_STICKY_CLASS, HEAP_ROOT_MONITOR_USED,
+                     HEAP_ROOT_JNI_GLOBAL, HEAP_ROOT_THREAD_OBJ, HEAP_ROOT_JNI_LOCAL,
+                     HEAP_ROOT_JAVA_FRAME, HEAP_ROOT_NATIVE_STACK, HEAP_ROOT_THREAD_BLOCK,
+                     0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x90):
+            extra = (id_size if tag == HEAP_ROOT_JNI_GLOBAL else
+                     8 if tag in (HEAP_ROOT_THREAD_OBJ, HEAP_ROOT_JNI_LOCAL, HEAP_ROOT_JAVA_FRAME, 0x8E) else
+                     4 if tag in (HEAP_ROOT_NATIVE_STACK, HEAP_ROOT_THREAD_BLOCK) else 0)
+            if not ensure(id_size + extra):
+                reader.incomplete = True
+                break
+            if scan is not None and tag != 0x90:  # ROOT_UNREACHABLE is not a live root.
+                oid = S_ID.unpack_from(buf, pos)[0]
+                scan.gc_roots.add(oid)
+                if tag == HEAP_ROOT_THREAD_OBJ:
+                    scan.note_thread_root(oid)
+            pos += id_size + extra
+        elif tag == 0xFE:  # HEAP_DUMP_INFO
+            ensure(4 + id_size)
+            pos += 4 + id_size
 
         elif tag == HEAP_CLASS_DUMP:
             # Rare (one per class); field-by-field is fine here.

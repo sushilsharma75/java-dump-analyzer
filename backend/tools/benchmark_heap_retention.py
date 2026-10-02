@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.hprof_builder import HprofBuilder
 from app.analyzers.heap_graph import trace_retention
 from app.analyzers.heap_index import build_index
+from app.analyzers.heap_dump import parse_heap_dump
 
 
 class CountingFile:
@@ -40,8 +41,11 @@ class CountingFile:
     def tell(self):
         return self.fp.tell()
 
+    def seekable(self):
+        return self.fp.seekable()
 
-def make_dump(path, objects):
+
+def make_dump(path, objects, payload_bytes=8, tail_owner=False):
     b = HprofBuilder()
     leaf = b.load_class('benchmark.Leaf')
     library = b.load_class('java.util.Holder')
@@ -50,7 +54,8 @@ def make_dump(path, objects):
     b.class_dump(leaf)
     b.class_dump(library, instance_fields=[('items', b.OBJECT)])
     b.class_dump(owner, instance_fields=[('holder', b.OBJECT)])
-    b.class_dump(unused, instance_fields=[('next', b.OBJECT)])
+    b.class_dump(unused, instance_fields=[('next', b.OBJECT)] +
+                 [(f'padding{i}', b.LONG) for i in range((payload_bytes - 8) // 8)])
     leaves = [b.instance(leaf) for _ in range(2000)]
     array = b.object_array(leaf, leaves)
     holder = b.instance(library, refs=[array])
@@ -61,9 +66,15 @@ def make_dump(path, objects):
         for first in range(0, objects, 10000):
             block = bytearray()
             for i in range(first, min(first + 10000, objects)):
-                block.extend(struct.pack('>BQI QI Q', 0x21, 0x200000 + i, 0, unused, 8, 0))
+                block.extend(struct.pack('>BQI QI Q', 0x21, 0x200000 + i, 0, unused, payload_bytes, 0))
+                block.extend(b'\0' * (payload_bytes - 8))
             fp.write(struct.pack('>BII', 0x1c, 0, len(block)))
             fp.write(block)
+        if tail_owner:
+            # Force a complete reference scan before finding the dominant
+            # class's application owner; no early-owner benchmark shortcut.
+            block = struct.pack('>BQI QI Q', 0x21, 0x200000 + objects, 0, owner, 8, 0x200000)
+            fp.write(struct.pack('>BII', 0x1c, 0, len(block)) + block)
 
 
 def main():
@@ -72,13 +83,47 @@ def main():
                         help='number of unrelated tail instances')
     parser.add_argument('--baseline-revision',
                         help='optional Git revision to compare the previous streaming tracer')
+    parser.add_argument('--report-only', action='store_true',
+                        help='benchmark the complete report pipeline with default limits, without separately building an index')
+    parser.add_argument('--payload-bytes', type=int, default=8,
+                        help='instance payload bytes, a multiple of 8 (one reference plus primitive longs)')
+    parser.add_argument('--tail-owner', action='store_true',
+                        help='place an owner of the dominant class at the very end of the dump')
     args = parser.parse_args()
     if args.objects < 0:
         parser.error('--objects must be nonnegative')
+    if args.payload_bytes < 8 or args.payload_bytes % 8:
+        parser.error('--payload-bytes must be a positive multiple of 8')
+    if args.tail_owner and not args.objects:
+        parser.error('--tail-owner requires at least one object')
     with tempfile.TemporaryDirectory(prefix='retention-benchmark-') as temp:
         path = Path(temp) / 'heap.hprof'
         index = Path(temp) / 'heap.sqlite'
-        make_dump(path, args.objects)
+        print('Generating synthetic dump', file=sys.stderr, flush=True)
+        make_dump(path, args.objects, args.payload_bytes, args.tail_owner)
+        if args.report_only:
+            started = time.monotonic()
+            stages = []
+            def stage(message):
+                stages.append(message)
+                print(message, file=sys.stderr, flush=True)
+            with path.open('rb') as fp:
+                stream = CountingFile(fp)
+                report = parse_heap_dump(stream, index_path=index, stage_callback=stage, deep=True)
+            assert report.histogram_complete
+            assert report.total_instances == args.objects + 2003 + int(args.tail_owner)
+            assert all(s.status != 'pending' for s in report.stages)
+            trace = next((f for f in report.findings if f.title.startswith('Retention path')), None)
+            if args.tail_owner and not any('time budget' in s.reason for s in report.skipped_analyses):
+                assert trace is not None and 'benchmark.Owner.holder' in ' '.join(trace.evidence)
+            print(json.dumps(dict(
+                total_objects=report.total_instances, dump_bytes=path.stat().st_size,
+                report_seconds=round(time.monotonic() - started, 3),
+                bytes_read=stream.bytes_read, histogram_complete=report.histogram_complete,
+                retention_found=trace is not None,
+                coverage=[s.model_dump() for s in report.stages],
+            ), indent=2))
+            return
         baseline_metrics = {}
         with path.open('rb') as fp:
             stream = CountingFile(fp)

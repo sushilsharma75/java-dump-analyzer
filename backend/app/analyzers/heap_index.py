@@ -23,10 +23,9 @@ def hx(n):
 
 def connect(path):
     db = sqlite3.connect(str(path), timeout=60)
-    from .heap_control import cancel_requested
+    from .heap_control import cancel_requested, budget_expired
     cancelled = cancel_requested.get()
-    if cancelled:
-        db.set_progress_handler(lambda: int(cancelled()), 1000)
+    db.set_progress_handler(lambda: int(bool(cancelled and cancelled()) or budget_expired()), 1000)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA temp_store=FILE")
     db.execute("PRAGMA cache_size=-16384")

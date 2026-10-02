@@ -6,6 +6,7 @@ Memory scales with class/root metadata and the configured sample, not array leng
 """
 from __future__ import annotations
 import struct
+from .heap_control import check_budget
 from typing import BinaryIO, Dict, List, Optional, Set, Tuple
 
 from ..schemas import Finding, Severity, SourceLocation
@@ -84,7 +85,8 @@ def _parse_class_dump(reader: _Reader, id_size: int):
 
 def _walk(reader: _Reader, id_size: int, *, on_utf8=None, on_load_class=None,
           on_class=None, on_root=None, on_instance=None, on_objarray=None,
-          on_primarray=None, on_instance_header=None, on_progress=None) -> None:
+          on_primarray=None, on_instance_header=None, on_progress=None,
+          instance_filter=None) -> None:
     """Walk every top-level record, dispatching to the provided callbacks.
 
     Object/array bodies are only read when the matching callback is given;
@@ -101,7 +103,7 @@ def _walk(reader: _Reader, id_size: int, *, on_utf8=None, on_load_class=None,
             seg_end = reader.pos + length
             _walk_segment(reader, seg_end, id_size, on_class, on_root,
                           on_instance, on_objarray, on_primarray,
-                          on_instance_header, on_progress)
+                          on_instance_header, on_progress, instance_filter)
         elif tag == TAG_UTF8:
             sid = reader.id(id_size)
             data = reader.read(length - id_size)
@@ -120,23 +122,35 @@ def _walk(reader: _Reader, id_size: int, *, on_utf8=None, on_load_class=None,
 
 def _walk_segment(reader, seg_end, id_size, on_class, on_root,
                   on_instance, on_objarray, on_primarray,
-                  on_instance_header=None, on_progress=None) -> None:
+                  on_instance_header=None, on_progress=None, instance_filter=None) -> None:
     instance_header = struct.Struct(">QIQI" if id_size == 8 else ">IIII")
     array_header = struct.Struct(">QIIQ" if id_size == 8 else ">IIII")
     primitive_header = struct.Struct(">QIIB" if id_size == 8 else ">IIIB")
     objects = 0
     while reader.pos < seg_end:
-        sub = reader.u1()
+        # Decode common headers directly from the read-ahead buffer. Avoid
+        # allocating a tag byte and a header byte string for every object.
+        if reader._buf_pos >= len(reader._buf):
+            reader._ensure(1)
+        sub = reader._buf[reader._buf_pos]
+        reader._buf_pos += 1
+        reader.pos += 1
         if sub == HEAP_INSTANCE_DUMP:
-            oid, _, cid, nbytes = instance_header.unpack(reader.read(instance_header.size))
+            reader._ensure(instance_header.size)
+            oid, _, cid, nbytes = instance_header.unpack_from(reader._buf, reader._buf_pos)
+            reader._buf_pos += instance_header.size
+            reader.pos += instance_header.size
             if on_instance_header:
                 on_instance_header(oid, cid)
-            if on_instance:
+            if on_instance and (instance_filter is None or instance_filter(oid, cid)):
                 on_instance(oid, cid, reader.read(nbytes))
             else:
                 reader.skip(nbytes)
         elif sub == HEAP_OBJECT_ARRAY_DUMP:
-            oid, _, n, elem = array_header.unpack(reader.read(array_header.size))
+            reader._ensure(array_header.size)
+            oid, _, n, elem = array_header.unpack_from(reader._buf, reader._buf_pos)
+            reader._buf_pos += array_header.size
+            reader.pos += array_header.size
             if on_objarray:
                 # Callbacks may stop after a match; consume the remaining payload
                 # without materializing millions of array entries.
@@ -145,6 +159,7 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
                     remaining = n
                     fmt = ">Q" if id_size == 8 else ">I"
                     while remaining:
+                        check_budget()
                         count = min(8192, remaining)
                         payload = reader.read(count * id_size)
                         if len(payload) != count * id_size:
@@ -156,7 +171,10 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
             else:
                 reader.skip(n * id_size)
         elif sub == HEAP_PRIMITIVE_ARRAY_DUMP:
-            oid, _, n, t = primitive_header.unpack(reader.read(primitive_header.size))
+            reader._ensure(primitive_header.size)
+            oid, _, n, t = primitive_header.unpack_from(reader._buf, reader._buf_pos)
+            reader._buf_pos += primitive_header.size
+            reader.pos += primitive_header.size
             if on_primarray:
                 on_primarray(oid, t, n)
             reader.skip(n * TYPE_SIZES.get(t, 0))
@@ -196,6 +214,8 @@ def _walk_segment(reader, seg_end, id_size, on_class, on_root,
         if reader.pos > seg_end:
             raise ValueError("Heap subrecord exceeds segment")
         objects += 1
+        if objects % 8192 == 0:
+            check_budget()
         if on_progress and objects % 1_000_000 == 0:
             on_progress(reader.pos)
 
@@ -220,6 +240,23 @@ class _Tracer:
         self._unpack_ref = struct.Struct(">Q").unpack_from
 
     # ---- pass 1: tables, layouts, roots, static targets ----
+    def load_meta(self, scan, statics):
+        """Reuse the complete histogram pass; no full metadata rescan."""
+        self.id_size = scan.id_size
+        self._unpack_ref = struct.Struct(">Q" if self.id_size == 8 else ">I").unpack_from
+        self.strings = scan.strings
+        self.class_name_id = scan.class_obj_to_name_id
+        self.layouts_own = scan.class_fields
+        self.supers = {cid: meta[0] for cid, meta in scan.class_meta.items()}
+        self.roots = scan.gc_roots
+        self.class_name_by_id = {
+            cid: _normalize_class_name(self.strings.get(nid, ""))
+            for cid, nid in self.class_name_id.items()
+        }
+        for cid, nid, val in statics:
+            self.static_targets[val] = (
+                self.class_name_by_id.get(cid, "?"), self.strings.get(nid, "?"))
+
     def scan_meta(self) -> None:
         reader, self.id_size = _open(self.fp)
         self._unpack_ref = struct.Struct(">Q" if self.id_size == 8 else ">I").unpack_from
@@ -260,7 +297,7 @@ class _Tracer:
         self._layout_cache[cid] = res
         return res
 
-    def _refs(self, cid: int, body: bytes):
+    def _ref_offsets(self, cid):
         # Precompute offsets once per class, including primitive and weak fields.
         # Per-object work then touches only strong reference slots.
         if cid not in self._ref_cache:
@@ -271,8 +308,11 @@ class _Tracer:
                     refs.append((nid, pos))
                 pos += self.id_size if t == 2 else TYPE_SIZES.get(t, 0)
             self._ref_cache[cid] = refs
+        return self._ref_cache[cid]
+
+    def _refs(self, cid: int, body: bytes):
         unpack = self._unpack_ref
-        for nid, pos in self._ref_cache[cid]:
+        for nid, pos in self._ref_offsets(cid):
             if pos + self.id_size > len(body):
                 break
             tgt = unpack(body, pos)[0]
@@ -399,6 +439,7 @@ class _Tracer:
 
         reader, _ = _open(self.fp)
         _walk(reader, self.id_size, on_instance=on_inst, on_objarray=on_arr,
+              instance_filter=lambda oid, cid: oid not in visited and bool(self._ref_offsets(cid)),
               on_progress=lambda pos: self.stage(f"Tracing retention references: {pos:,} bytes"))
 
 
@@ -502,7 +543,7 @@ class _IndexedTracer(_Tracer):
 
 def trace_retention(fp: BinaryIO, leaf_class: str, source=None,
                     sample_cap: int = 2000, max_levels: int = 6,
-                    index_path=None, stage_callback=None) -> Optional[Finding]:
+                    index_path=None, stage_callback=None, metadata=None) -> Optional[Finding]:
     """Trace what holds `leaf_class` alive and return a retention-chain Finding.
 
     Returns None if nothing useful was found (no holders, or the class isn't in
@@ -518,7 +559,10 @@ def trace_retention(fp: BinaryIO, leaf_class: str, source=None,
             tracer = _IndexedTracer(fp, db, **options)
         else:
             tracer = _Tracer(fp, **options)
-        tracer.scan_meta()
+        if metadata is not None and index_path is None:
+            tracer.load_meta(*metadata)
+        else:
+            tracer.scan_meta()
         chain, terminal = tracer.trace(leaf_class)
     finally:
         if db is not None:

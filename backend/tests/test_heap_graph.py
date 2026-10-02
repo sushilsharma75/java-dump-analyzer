@@ -337,3 +337,43 @@ def test_trace_supports_four_byte_object_ids(tmp_path):
     path = tmp_path / 'heap.sqlite'
     build_index(io.BytesIO(data), path)
     assert trace_retention(io.BytesIO(data), 'example.Leaf', index_path=path) == expected
+
+
+@pytest.mark.parametrize('anchor', ['root', 'static'])
+def test_full_parse_reuses_metadata_without_a_retention_rescan(monkeypatch, anchor):
+    from app.analyzers.heap_graph import _Tracer
+    b = HprofBuilder()
+    leaf = b.load_class('example.Leaf')
+    parent = b.load_class('java.util.Parent')
+    b.class_dump(leaf)
+    b.class_dump(parent, instance_fields=[('payload', b.OBJECT)])
+    obj = b.instance(leaf, body=b'\0' * 64)
+    holder = b.instance(parent, refs=[obj])
+    if anchor == 'root':
+        b.gc_root(holder)
+    else:
+        cache = b.load_class('example.Cache')
+        b.class_dump(cache, static_object_fields=[('entries', holder)])
+    data = b.build()
+    expected = trace_retention(io.BytesIO(data), 'example.Leaf')
+    def fail(self):
+        pytest.fail('Histogram metadata must be reused')
+    monkeypatch.setattr(_Tracer, 'scan_meta', fail)
+    monkeypatch.setenv('HEAP_DOMINATOR', '0')
+    result = parse_heap_dump(io.BytesIO(data))
+    actual = next(f for f in result.findings if f.title.startswith('Retention path'))
+    assert actual.evidence == expected.evidence
+
+
+def test_reference_free_instances_do_not_load_payloads():
+    from app.analyzers.heap_graph import _Tracer
+    b = HprofBuilder()
+    cls = b.load_class('java.util.PrimitiveOnly')
+    b.class_dump(cls, instance_fields=[('value', b.INT)])
+    b.instance(cls, body=b'\0' * 4)
+    tracer = _Tracer(io.BytesIO(b.build()))
+    tracer.scan_meta()
+    def fail(*args):
+        pytest.fail('Reference-free instance must be skipped before payload decoding')
+    tracer._refs = fail
+    tracer.visit_holders({0x123: ['leaf']}, set(), fail)

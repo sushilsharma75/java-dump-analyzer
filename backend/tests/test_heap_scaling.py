@@ -122,3 +122,89 @@ def test_failed_index_is_not_built_again_for_dominators(tmp_path, monkeypatch):
     result = parse_heap_dump(io.BytesIO(data), index_path=tmp_path / 'graph.sqlite')
     assert len(calls) == 1
     assert any(s.stage.startswith('dominator') and 'test disk full' in s.reason for s in result.skipped_analyses)
+
+
+def test_deadline_preserves_full_histogram_and_finishes_all_stages(tmp_path, monkeypatch):
+    from app.analyzers import heap_control
+    data, _ = fixture()
+    clock = [0.0]
+    monkeypatch.setattr(heap_control.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setenv('HEAP_ANALYSIS_MAX_SECONDS', '1')
+    checkpoints = []
+
+    def report(result):
+        checkpoints.append(result)
+        clock[0] = 2.0  # Histogram consumed the budget; never truncate it.
+
+    result = parse_heap_dump(io.BytesIO(data), index_path=tmp_path / 'graph.sqlite',
+                             report_callback=report, deep=True)
+    assert result.histogram_complete and result.total_instances == 10
+    assert checkpoints[0].histogram_complete
+    assert all(s.status != 'pending' for s in result.stages)
+    assert any(s.status == 'partial' and 'time budget' in s.reason for s in result.stages)
+    assert not (tmp_path / 'graph.sqlite').exists()
+    assert heap_control.analysis_deadline.get() is None
+
+
+def test_deadline_interrupts_sql_and_does_not_leak_to_next_run(tmp_path):
+    from app.analyzers.heap_control import within_budget, HeapBudgetExceeded
+    from app.analyzers.heap_index import connect
+    import time
+    db = connect(tmp_path / 'query.sqlite')
+    try:
+        with pytest.raises(HeapBudgetExceeded):
+            with within_budget(time.monotonic() + .02):
+                db.execute('WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n').fetchone()
+        assert db.execute('SELECT 1').fetchone()[0] == 1
+    finally:
+        db.close()
+
+
+def test_expired_budget_interrupts_buffered_reference_walk():
+    from app.analyzers.heap_control import within_budget, HeapBudgetExceeded
+    from app.analyzers.heap_graph import _open, _walk
+    from unittest.mock import patch
+    data, _ = fixture(20_000)  # Fits in read-ahead; no further file read needed.
+    reader, width = _open(io.BytesIO(data))
+    clock = [0.0]
+    def expire(oid, cid):
+        clock[0] = 2.0
+    with patch('app.analyzers.heap_control.time.monotonic', lambda: clock[0]):
+        with pytest.raises(HeapBudgetExceeded):
+            with within_budget(1.0):
+                _walk(reader, width, on_instance_header=expire)
+
+
+def test_timed_out_index_is_removed_and_not_rebuilt(tmp_path, monkeypatch):
+    from app.analyzers.heap_control import HeapBudgetExceeded
+    data, _ = fixture()
+    path = tmp_path / 'graph.sqlite'
+    calls = []
+    def fail(fp, path, **kwargs):
+        calls.append(True)
+        path.write_bytes(b'partial catalog')
+        raise HeapBudgetExceeded('test time budget')
+    monkeypatch.setattr('app.analyzers.heap_index.build_index', fail)
+    result = parse_heap_dump(io.BytesIO(data), index_path=path)
+    assert len(calls) == 1 and not path.exists()
+    assert result.histogram_complete
+    assert next(s for s in result.stages if s.stage == 'object index').status == 'partial'
+
+
+def test_no_byte_or_char_arrays_avoids_waste_rescan(monkeypatch):
+    data, _ = fixture()
+    def fail(*args, **kwargs):
+        pytest.fail('No byte/char arrays exist, so a duplicate-array pass is unnecessary')
+    monkeypatch.setattr('app.analyzers.heap_waste.find_wasted_memory', fail)
+    result = parse_heap_dump(io.BytesIO(data), deep=True)
+    assert result.histogram_complete and result.wasted_bytes_estimate == 0
+
+
+def test_failed_build_does_not_delete_existing_catalog(tmp_path):
+    data, objects = fixture()
+    path = tmp_path / 'existing.sqlite'
+    build_index(io.BytesIO(data), path)
+    result = parse_heap_dump(io.BytesIO(data), index_path=path)
+    assert result.histogram_complete
+    assert next(s for s in result.stages if s.stage == 'object index').status == 'failed'
+    assert object_detail(path, hex(objects[0]))['values']['sample.Node.value'] == 0

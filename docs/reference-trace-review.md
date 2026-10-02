@@ -24,8 +24,9 @@ source attachment endpoints, and the React investigation/report views.
 
 ## Limits that still explain incomplete traces
 
-- Full indexing and compact dominators now run without default size cutoffs.
-  Explicit `HEAP_INDEX_MAX_*` / `HEAP_DOMINATOR_MAX_*` settings may limit them.
+- Automatic indexing and compact dominators default to a 2,000,000-object ceiling.
+  Explicit `HEAP_INDEX_MAX_*` / `HEAP_DOMINATOR_MAX_*` settings can change it.
+  Optional work shares the `HEAP_ANALYSIS_MAX_SECONDS` budget (900 seconds).
   Quick analysis or a failed index still prevents object browsing. Reanalysis is
   needed after a skipped index; attaching source cannot reconstruct it.
   See `HEAP_PERFORMANCE.md` for measured scale and remaining runtime limits.

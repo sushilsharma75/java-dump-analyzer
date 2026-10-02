@@ -12,7 +12,7 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from .heap_control import cancel_requested
+from .heap_control import cancel_requested, check_budget
 
 
 def compute_dominators(db, directory, stage_callback=None):
@@ -25,6 +25,7 @@ def compute_dominators(db, directory, stage_callback=None):
     cancelled = cancel_requested.get()
 
     def progress(message):
+        check_budget()
         if cancelled and cancelled():
             from ..heap_jobs import HeapCancelled
             raise HeapCancelled()

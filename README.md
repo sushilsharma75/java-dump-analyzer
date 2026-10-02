@@ -315,9 +315,11 @@ until explicitly deleted. Treat that directory as sensitive diagnostic data.
 ## Heap graph and size semantics
 
 Full API analyses stream the complete dump for the histogram (unless quick mode
-is selected), then build the object index and compute retained sizes. There is no
-default byte/object cutoff. Explicit `HEAP_INDEX_MAX_*` and `HEAP_DOMINATOR_MAX_*`
-settings remain available. Arrays are processed in chunks; reference inserts and
+is selected), then run follow-up analyses within a shared time budget. Automatic
+object indexing and exact retained sizes default to at most 2,000,000 objects;
+larger heaps still receive a complete histogram and sampled ownership tracing.
+`HEAP_INDEX_MAX_OBJECTS` and `HEAP_DOMINATOR_MAX_OBJECTS` can explicitly raise these
+limits. Arrays are processed in chunks; reference inserts and
 object updates are batched. SQLite stores the persistent object browser data.
 Dominator traversal resolves object IDs once into compact numeric adjacency
 arrays, then uses the Lengauer–Tarjan algorithm without SQL queries per object.
@@ -344,6 +346,16 @@ and `HEAP_DOMINATOR_MAX_OBJECTS`, including when an index exists. The old
 `HEAP_DISK_DOMINATORS` switch does not bypass these limits. Skipped retained sizes
 are unavailable, not zero. The sampled tracer supplies additional ownership leads;
 it does not replace the dominator calculation or enumerate every GC-root path.
+
+`HEAP_ANALYSIS_MAX_SECONDS` defaults to 900 seconds measured from the start of
+parsing. The complete histogram is always allowed to finish. Optional work stops
+cooperatively when the remaining budget expires, and the report marks affected
+stages as partial. Extended/deep mode does not override this budget or the object
+limits. Set the budget to `0` for an explicitly unlimited run. Upload, decompression,
+blocked disk I/O, and histogram parsing can still take longer than 15 minutes;
+this setting is not a guarantee of complete exact graph analysis in that time.
+Retention reuses classes, fields, static references and roots from the histogram
+pass and skips decoding bodies of classes without strong reference fields.
 
 Large-dump support means the parser/index accepts files up to the API's 50 GiB limit;
 it is **not a measured throughput or disk-space guarantee at 25–50 GiB**. SQLite
@@ -457,12 +469,13 @@ cleaning up its transient job record.
 | `DUMP_TMP_DIR` | OS temp directory + `postmortem` | Uploaded dump staging |
 | `ANALYSIS_DIR` | OS temp directory + `postmortem/analyses` | Persisted JSON and SQLite indexes; configure a durable volume |
 | `HEAP_INDEX_MAX_BYTES` | No automatic cutoff | Optional persistent object-index size ceiling; `0` disables it |
-| `HEAP_INDEX_MAX_OBJECTS` | No automatic cutoff | Optional index object-count ceiling |
+| `HEAP_INDEX_MAX_OBJECTS` | `2000000` | Automatic index object-count ceiling; raise explicitly for exhaustive investigation |
+| `HEAP_ANALYSIS_MAX_SECONDS` | `900` | Shared elapsed-time budget for follow-up stages, measured from parse start; histogram always completes; `0` is unlimited |
 | `HEAP_DOMINATOR` | `1` | `0` disables dominator computation |
 | `HEAP_SUSPECT_PERCENT` | `10` | Retained-memory percentage threshold for automatic suspect findings |
 | `HEAP_SUSPECT_MIN_BYTES` | `1048576` | Minimum retained bytes for automatic suspect findings |
 | `HEAP_DOMINATOR_MAX_BYTES` | No automatic cutoff | Optional retained-size ceiling in bytes, also enforced with a persistent index |
-| `HEAP_DOMINATOR_MAX_OBJECTS` | No automatic cutoff | Optional retained-size object-count ceiling, including temporary indexes |
+| `HEAP_DOMINATOR_MAX_OBJECTS` | `2000000` | Retained-size object-count ceiling, including temporary indexes |
 | `HEAP_GRAPH_TRACE` | `1` | Bounded heuristic retention tracer |
 | `HEAP_GRAPH_MAX_BYTES` | No automatic size cutoff | Optional sampled retention tracer ceiling, in bytes; `0` disables |
 | `HEAP_WASTE_TRACE` | `1` | Duplicate-array analysis |

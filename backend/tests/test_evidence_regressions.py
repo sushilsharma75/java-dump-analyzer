@@ -210,6 +210,7 @@ def test_complete_histogram_and_failed_stage_visible(monkeypatch):
     b.class_dump(c)
     o = b.instance(c)
     b.gc_root(o)
+    b.primitive_array(b.BYTE, 3, data=b'abc')  # Ensure there is waste-scan work.
 
     def fail(*a, **kw):
         raise RuntimeError("test failure")

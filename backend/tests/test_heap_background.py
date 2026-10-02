@@ -190,3 +190,23 @@ def test_sql_work_honors_worker_cancellation(tmp_path):
             db.close()
     finally:
         cancel_requested.reset(token)
+
+
+def test_retention_budget_finishes_job_with_saved_histogram(setup, monkeypatch):
+    from app.analyzers import heap_graph
+    from app.analyzers.heap_control import analysis_deadline
+    client, path = setup
+    original = heap_graph.trace_retention
+    def expired_trace(*args, **kwargs):
+        analysis_deadline.set(time.monotonic() - 1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(heap_graph, 'trace_retention', expired_trace)
+    jid = client.post('/api/analyze/heap/path', json={'path': str(path), 'deep': True}).json()['job_id']
+    job = wait_terminal(client, jid)
+    assert job['status'] == 'done'
+    assert job['result']['histogram_complete']
+    assert job['result']['background_job']['status'] == 'done'
+    assert all(s['status'] != 'pending' for s in job['result']['stages'])
+    stage = next(s for s in job['result']['stages'] if s['stage'].startswith('retention tracing'))
+    assert stage['status'] == 'partial' and 'time budget' in stage['reason']
+    assert job['result']['verdict'] != 'healthy'

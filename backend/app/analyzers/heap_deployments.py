@@ -97,6 +97,7 @@ class DeploymentScan:
         self.class_meta: Dict[int, Tuple[int, int, int]] = {}      # cid -> (super, loader, pd)
         self.class_fields: Dict[int, List[Tuple[int, int]]] = {}   # cid -> [(name_id, type)]
         self.root_thread_oids: Set[int] = set()
+        self.gc_roots: Set[int] = set()
         self.retained: Dict[int, Tuple[int, bytes]] = {}           # oid -> (cid, field bytes)
         self._retain_cids: Optional[Set[int]] = None
         self._name_cache: Dict[int, str] = {}

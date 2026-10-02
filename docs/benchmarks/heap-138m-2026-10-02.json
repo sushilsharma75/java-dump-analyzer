@@ -1,0 +1,45 @@
+{
+  "total_objects": 138273967,
+  "dump_bytes": 11200220482,
+  "report_seconds": 324.406,
+  "bytes_read": 22404635268,
+  "histogram_complete": true,
+  "retention_found": true,
+  "coverage": [
+    {
+      "stage": "histogram",
+      "status": "completed",
+      "reason": null
+    },
+    {
+      "stage": "object index",
+      "status": "skipped",
+      "reason": "138,273,967 objects exceeds HEAP_INDEX_MAX_OBJECTS=2,000,000; full histogram and source findings remain available"
+    },
+    {
+      "stage": "source matching",
+      "status": "completed",
+      "reason": null
+    },
+    {
+      "stage": "retention tracing (what holds the top consumer)",
+      "status": "partial",
+      "reason": "Bounded heuristic/sample, not exhaustive"
+    },
+    {
+      "stage": "duplicate-string / duplicate-buffer scan",
+      "status": "partial",
+      "reason": "Bounded heuristic/sample, not exhaustive"
+    },
+    {
+      "stage": "dominator tree (exact retained sizes, leak suspects, unreachable-object accounting)",
+      "status": "skipped",
+      "reason": "138,273,967 objects exceeds HEAP_DOMINATOR_MAX_OBJECTS=2,000,000"
+    },
+    {
+      "stage": "deployment attribution",
+      "status": "completed",
+      "reason": null
+    }
+  ]
+}

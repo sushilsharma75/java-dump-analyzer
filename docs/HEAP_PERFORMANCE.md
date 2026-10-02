@@ -1,5 +1,73 @@
 # Heap analysis performance regression
 
+## 138-million-object retention fix (2026-10-02)
+
+The latest screenshot shows 138,273,967 objects, 100% parsed, and retention still
+running after 131 minutes. The actual dump is unavailable locally, so the exact
+production bottleneck is not measured. Code inspection found repeated full scans
+per retention level and unrestricted SQLite indexing before retention.
+
+The report pipeline now reuses histogram metadata for retention, decodes common
+record headers directly from the read buffer, and skips instance bodies with no
+strong reference fields. A complete histogram containing no byte/char arrays also
+avoids the duplicate-array pass. Connected-path and weak-reference semantics are
+unchanged.
+
+Automatic SQLite indexing and exact dominators now default to 2,000,000 objects.
+Larger inputs keep the full histogram and sampled retention tracing. Both limits
+can be raised explicitly. Optional stages share a 900-second budget measured from
+parse start; deep mode cannot bypass it. Timeout checks cover buffered scans,
+SQLite queries and compact graph checkpoints. Reports label unfinished work as
+partial, remove incomplete catalogs, preserve structural deployment data, and
+finish the background job. The histogram is never truncated by this budget.
+Set `HEAP_ANALYSIS_MAX_SECONDS=0` for explicitly unlimited optional work.
+
+Measured locally with Python 3.13 on Linux:
+
+| Synthetic report measurement | Result |
+| --- | ---: |
+| Heap objects | 138,273,967 |
+| HPROF bytes | 11,200,220,482 (10.43 GiB) |
+| End-to-end analysis, excluding fixture generation | 324.406 seconds (5m 24s) |
+| Bytes returned by the file wrapper | 22,404,635,268 |
+| Complete histogram | Yes |
+| Sampled retaining owner found | Yes, owner at end of file |
+| Exact dominators / object index | Skipped by object-count limits |
+
+Raw results: [benchmark JSON](benchmarks/heap-138m-2026-10-02.json).
+
+Reproduce from the repository root:
+
+```sh
+backend/.venv/bin/python backend/tools/benchmark_heap_retention.py \
+  --objects 138271963 --payload-bytes 56 --tail-owner --report-only
+```
+
+The fixture contains ordinary instance records, not sparse giant arrays. Most
+objects have one null reference and six primitive longs. The dominant class's
+owner is at the end, forcing one full reference pass; it does not represent a
+dense production graph needing six reverse passes. It has no byte/char arrays to
+hash. This establishes a measured result at the screenshot's object count, not a
+10–15 minute guarantee for the user's Windows machine or exact retained sizes.
+Blocked I/O, decompression and histogram parsing may exceed the budget.
+
+The one-million-object standalone tracer comparison returned identical findings:
+5.354 seconds for the committed tracer and 4.377 seconds for the updated tracer.
+This excludes histogram-metadata reuse. Existing indexed tracing remains available
+when an index has already been built; constructing that index took 19.767 seconds
+in the same run.
+
+Validation: 327 backend tests passed. One unrelated MySQL test,
+`test_i1_mysql_uses_full_scan_selectivity`, fails with `orders` versus
+`public.orders`; it also fails on a clean archive of the unchanged HEAD revision.
+All 68 focused heap/evidence tests passed, as did 26 frontend tests and the
+production frontend build. API tests require execution outside this environment's
+sandbox because its local asyncio test client stalls during startup inside it.
+
+Restart the backend and rerun the analysis to use the changes. A job already
+running the old code cannot acquire them. Rebuild the frontend for updated scan
+option text. Earlier measurements and implementation history follow.
+
 The reported 3.1 GB dump reached 100% parsing with 38,381,746 instances but did
 not return a report after more than an hour. The screenshots alone cannot identify
 the exact running statement; the following regressions were confirmed in code.
@@ -33,10 +101,10 @@ read buffer across forward gaps. Static field names resolve in a single table
 scan, and catalog transactions commit every 10,000 heap subrecords even inside a
 single large HPROF segment.
 
-The former 512 MiB / one-million-object automatic cutoffs have been removed after
-replacing SQL-per-object dominator traversal. Byte/object environment settings
-still enforce explicit operator budgets, including for temporary indexes.
-Full native indexing runs after the saved histogram checkpoint. No prefix-only
+Replacing SQL-per-object dominator traversal previously removed the automatic
+cutoffs. The latest policy above restores object-count limits because building
+the SQLite graph is still expensive at hundreds of millions of objects. Indexing
+runs after the saved histogram checkpoint when within those limits. No prefix-only
 quick mode is silently substituted.
 
 Sampled retention tracing now runs at every dump size by default. An explicit
